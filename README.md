@@ -31,7 +31,7 @@ This repo does both first, then builds the pipeline.
 | Phase | What it delivers | State |
 |---|---|:---:|
 | **0** | Golden question set + no-RAG baseline | ✅ built, awaiting scoring |
-| 1 | Naive RAG end to end — fixed chunks, one model, top-k | ⬜ |
+| **1** | Naive RAG end to end — fixed chunks, one model, top-k | ✅ built, awaiting run |
 | 2 | Retrieval quality — AST chunking, hybrid search, reranking | ⬜ |
 | 3 | Evaluation harness — recall@k, MRR, faithfulness judge | ⬜ |
 | 4 | Model/approach ROI comparison + written decision | ⬜ |

@@ -1,0 +1,23 @@
+services:
+  postgres:
+    # pgvector/pgvector ships Postgres with the vector extension already built.
+    # Port 5433 on purpose - cdc-pipeline already owns 5432, and having both
+    # running at once is the normal case while working on this.
+    image: pgvector/pgvector:pg16
+    container_name: rag-postgres
+    environment:
+      POSTGRES_USER: rag
+      POSTGRES_PASSWORD: rag
+      POSTGRES_DB: rag
+    ports:
+      - "5433:5432"
+    volumes:
+      - rag-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U rag -d rag"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  rag-pgdata:

@@ -72,11 +72,12 @@ questions:
     category: locational
     difficulty: easy
     ground_truth: >
-      internal/consumer/lag_monitor.go. It polls every 15s (lagPollInterval),
-      fetches partitions via Metadata, the high-watermark via ListOffsets with
-      kafka.LastOffset, the group committed offset via OffsetFetch, then sets
-      lag = latest - committed per partition on the KafkaConsumerLag gauge,
-      clamped at 0.
+      internal/consumer/lag_monitor.go. Every 15 seconds it asks Kafka two
+      numbers for each partition: how many messages have been written to it,
+      and how far the consumer group has got through them. Lag is the gap
+      between those two, meaning the number of messages still waiting to be
+      processed. It writes that number to the kafka_consumer_lag gauge, and
+      never reports a negative value.
     expected_sources: [internal/consumer/lag_monitor.go]
     must_contain: ["lag_monitor.go"]
     must_not_contain: []
