@@ -1,0 +1,175 @@
+# Phase 1 — naive RAG, measured
+
+First real run against `cdc-pipeline` (commit `78ab775`), 2026-09-20.
+
+Config: fixed-size line windows (3200 B target, 400 B overlap) ·
+`nomic-embed-text` (768-dim) via local Ollama · pgvector HNSW, cosine · plain
+top-k, k=5 · no reranking, no hybrid search.
+
+---
+
+## Indexing
+
+| | |
+|---|---|
+| Files | 48 (exact parity with `pack-corpus.sh`) |
+| Chunks | 107 |
+| Full index | **64.9 s** |
+| Re-index, nothing changed | **7 ms**, 0 embedded, 107 skipped |
+
+The hash cache turns a 65-second re-index into 7 milliseconds — about
+9,000×. Worth noting *why* that ratio is so extreme: embedding is the only
+slow step in the whole pipeline. Everything else is I/O and Postgres.
+
+## Query latency
+
+| | |
+|---|---|
+| First query after Ollama starts | 8,183 ms |
+| Every query after that | **~55 ms** |
+
+The first call pays for loading the model into memory. Steady-state retrieval
+is 55 ms, which is Postgres doing an HNSW lookup plus one local embedding
+call. For comparison, the no-RAG baseline has to ship ~62,900 tokens over the
+network on every single question.
+
+## Chunk shape — the thing to fix first
+
+| | |
+|---|---|
+| Chunks per file | 2.2 avg, 13 max |
+| Lines per chunk | **82.7 avg**, 139 max |
+| Files that are a single chunk | 21 of 48 |
+
+**Chunks are far too coarse.** At ~83 lines, a chunk is most of a small Go
+file. Retrieval is effectively working at *file* granularity — it can tell you
+`lag_monitor.go` is relevant, but not *which part*. Almost half the corpus is
+one indivisible blob.
+
+That is the fixed-size chunker doing exactly what it was built to do, and it
+sets up Phase 2: AST chunking should take the average to one function per
+chunk, roughly 10–25 lines, giving retrieval something to actually discriminate
+between.
+
+---
+
+## Retrieval results
+
+Scored as recall@5 against `expected_sources` in the golden set. Retrieval
+only — no generation, so this measures the retriever alone.
+
+### q04 — "which file calculates consumer lag?" · recall **1/1**
+
+```
+[1] 0.645  internal/consumer/lag_monitor.go:1-124   ← correct
+[2] 0.636  CDC_Pipeline_Project.md:550-653
+[3] 0.619  alerts.yml:126-147
+[4] 0.615  alerts.yml:69-136
+[5] 0.600  internal/metrics/prometheus.go:94-166
+```
+
+Works. Easy locational questions are what naive vector search is good at.
+
+### q07 — "why a `kafkaQuerier` interface?" · recall **1/3**
+
+```
+[1] 0.710  internal/consumer/lag_monitor.go:1-124   ← correct
+[2] 0.612  alerts.yml:126-147
+[3] 0.610  internal/consumer/kafka_consumer.go:1-121
+[4] 0.604  docs/alerting.md:75-144
+[5] 0.598  docker/debezium/register-connector.sh:1-52
+```
+
+**Missing `decisions.md` and `lag_monitor_test.go`** — the two sources that
+carry the *other half* of the answer. `decisions.md` states the convention
+("interfaces defined in the package that uses them") and the test file is the
+proof that testability was the motive.
+
+This is the predicted failure, and the diagnosis is precise: both missing
+files contain the literal string `kafkaQuerier`, but neither is *semantically*
+close to the question. Rare identifiers have no neighbours in embedding space.
+BM25 would rank both at the top instantly. **This is the hybrid-search
+argument, now with a number attached.**
+
+### q12 — "difference between the two lag metrics?" · recall **2/3**
+
+```
+[1] 0.582  internal/consumer/lag_monitor.go:1-124   ← correct
+[2] 0.576  internal/metrics/prometheus.go:1-108     ← correct
+[3] 0.570  alerts.yml:126-147
+[4] 0.562  README.md:169-289
+[5] 0.544  internal/api/middleware/metrics.go:1-47
+```
+
+**Missing `debezium_handler.go`**, which is where `pipeline_lag_seconds` is
+actually computed. So the retriever found one half of a comparison question
+and not the other — the answer will be confidently lopsided.
+
+Note the scores are the flattest of any question (0.582 → 0.544). Everything
+looks equally "about lag" and nothing stands out.
+
+### q15 — "how does it use Redis?" · negative case
+
+```
+[1] 0.537  postman/.postman/resources.yaml:1-10
+[2] 0.528  .github/workflows/ci.yml:1-54
+[3] 0.514  CDC_Pipeline_Project.md:1-72
+[4] 0.514  CDC_Pipeline_Project.md:374-479
+[5] 0.506  CDC_Pipeline_Project.md:280-389
+```
+
+Pure noise, as it should be — there is no Redis to find. The retriever
+cannot refuse; it returns five chunks no matter what. Whether this question
+is answered correctly rests entirely on the grounding instructions in the
+system prompt.
+
+**But look at the scores.** Top hit 0.537, versus 0.645–0.710 for the
+answerable questions. Across this sample, everything answerable scored ≥0.58
+and this one peaked at 0.537. A similarity floor might detect
+"nothing relevant here" before generation even runs — cheap, and worth
+testing properly in Phase 3 rather than trusting four data points.
+
+---
+
+## Cross-cutting observations
+
+**A sticky chunk.** `alerts.yml:126-147` appeared in q04, q07 *and* q12 — three
+of four queries, none of which were about alerting. It is a short chunk dense
+with the words "lag", "kafka" and "consumer", so it matches anything in the
+neighbourhood without contributing an answer. Short, keyword-dense chunks
+punch above their weight in cosine similarity. Reranking should demote it.
+
+**Two distinct failure modes, and they need different fixes:**
+
+| Failure | Seen in | Fix |
+|---|---|---|
+| Rare identifier has no semantic neighbours | q07 | hybrid search (BM25 + vector) |
+| Redundant hits crowd out the second half of a comparison | q12 | MMR / diversity |
+
+Worth separating, because a single "improve retrieval" change would fix one
+and not the other, and without this breakdown you would not know which.
+
+---
+
+## Phase 2 priorities, in order
+
+1. **AST-aware chunking.** 83-line chunks are the root cause of the coarse
+   granularity. Biggest single lever.
+2. **Hybrid search.** Postgres `tsvector` alongside the vector column, fused
+   with Reciprocal Rank Fusion. Directly targets q07.
+3. **Context enrichment.** Prepend file path, package and symbol name before
+   embedding, so a chunk carries its own identity.
+4. **MMR / diversity.** Targets q12.
+5. **Reranking.** Retrieve ~25, score for relevance, keep ~6. Demotes sticky
+   chunks like `alerts.yml`.
+
+Each lands as its own change, measured against these numbers.
+
+---
+
+## Caveat
+
+This is 4 questions out of 20, scored by hand, retrieval only. It is enough to
+point Phase 2 in the right direction and not enough to claim anything. The
+Phase 3 harness runs all 20 automatically and produces the numbers that
+actually count.
