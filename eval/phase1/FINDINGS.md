@@ -85,11 +85,30 @@ carry the *other half* of the answer. `decisions.md` states the convention
 ("interfaces defined in the package that uses them") and the test file is the
 proof that testability was the motive.
 
-This is the predicted failure, and the diagnosis is precise: both missing
-files contain the literal string `kafkaQuerier`, but neither is *semantically*
-close to the question. Rare identifiers have no neighbours in embedding space.
-BM25 would rank both at the top instantly. **This is the hybrid-search
-argument, now with a number attached.**
+This is the predicted failure, but the diagnosis needs splitting in two,
+because the two misses have different causes and different fixes.
+
+`lag_monitor_test.go` contains the literal string `kafkaQuerier` and is still
+not retrieved — a rare identifier has no neighbours in embedding space, so
+cosine similarity cannot see it. BM25 ranks it first instantly. **That is the
+hybrid-search argument, with a number attached.**
+
+`decisions.md` is harder, and an earlier draft of this document got it wrong
+by claiming it also contains the identifier. It does not. The relevant line is
+just:
+
+> Interfaces defined in the package that uses them, not the package that
+> implements them
+
+No `kafkaQuerier`, no `lag`, no `kafka`. Keyword search will not find it from
+this question and neither will vector search, because a terse one-line
+convention in a 7-line file is a weak embedding target however it is chunked.
+
+So hybrid search should take q07 from 1/3 to 2/3, not 3/3. Getting to 3/3
+needs something else — query expansion, or accepting that repo-wide
+conventions are a different retrieval problem from code lookup. Worth stating
+the expected ceiling before making the change, so the result can be judged
+against a prediction rather than rationalised afterwards.
 
 ### q12 — "difference between the two lag metrics?" · recall **2/3**
 

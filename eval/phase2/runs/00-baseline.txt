@@ -1,0 +1,44 @@
+run         phase1-baseline: fixed chunks, vector only
+embed model nomic-embed-text
+k           5
+questions   19 scored, 1 negative (excluded from recall)
+elapsed     10.682s
+
+ID   CAT         RECALL  RR    TOP    MISSING
+q01  factual     0.50    0.50  0.626  [go.mod]
+q02  factual     0.00    0.00  0.636  [internal/config/config.go]
+q03  factual     0.50    1.00  0.680  [internal/config/config.go]
+q04  locational  1.00    1.00  0.645  -
+q05  locational  1.00    1.00  0.654  -
+q06  locational  1.00    1.00  0.692  -
+q07  reasoning   0.33    1.00  0.710  [decisions.md internal/consumer/lag_monitor_test.go]
+q08  reasoning   0.50    0.50  0.644  [internal/consumer/debezium_handler.go]
+q09  reasoning   1.00    1.00  0.597  -
+q10  reasoning   1.00    0.25  0.641  -
+q11  cross-file  0.12    0.33  0.703  [internal/api/router.go internal/api/handler/order_handler.go internal/service/order_service.go internal/db/postgres.go internal/consumer/kafka_consumer.go internal/consumer/debezium_handler.go docker-compose.yml]
+q12  cross-file  0.67    1.00  0.582  [internal/consumer/debezium_handler.go]
+q13  cross-file  0.33    0.50  0.614  [internal/consumer/kafka_consumer.go internal/errors/errors.go]
+q14  cross-file  0.00    0.00  0.709  [internal/api/router.go internal/api/handler/order_handler.go]
+q15  negative    n/a     n/a   0.537  (negative)
+q16  negative    0.67    1.00  0.596  [internal/api/router.go]
+q17  negative    1.00    1.00  0.572  -
+q18  reasoning   1.00    1.00  0.653  -
+q19  reasoning   1.00    1.00  0.613  -
+q20  factual     0.33    1.00  0.607  [cmd/server/main.go internal/db/migrations/001_create_orders.sql]
+
+recall@5        0.629
+MRR             0.741
+perfect recall  8/19
+zero recall     2/19
+
+recall by category
+  cross-file   0.281
+  factual      0.333
+  locational   1.000
+  negative     0.833
+  reasoning    0.806
+
+score separation
+  lowest answerable  0.572
+  highest negative   0.537
+  holds: a floor between them would reject every negative

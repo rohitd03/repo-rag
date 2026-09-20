@@ -55,6 +55,8 @@ func main() {
 		err = runAsk(ctx, os.Args[2:])
 	case "stats":
 		err = runStats(ctx, os.Args[2:])
+	case "eval":
+		err = runEval(ctx, os.Args[2:])
 	default:
 		usage()
 		os.Exit(2)
@@ -72,6 +74,7 @@ func usage() {
   rag index -corpus NAME -root PATH    chunk, embed and store a repository
   rag ask   -corpus NAME [-k N] QUESTION
   rag stats -corpus NAME               what is currently indexed
+  rag eval  -corpus NAME [-k N] [-v]   score retrieval against the golden set
 
 environment:
   RAG_DATABASE_URL   default `+defaultDSN+`
