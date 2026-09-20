@@ -20,6 +20,11 @@ CREATE TABLE IF NOT EXISTS chunks (
     -- the only slow part of indexing.
     content_hash TEXT        NOT NULL,
 
+    -- Provenance, used to enrich the embedded text and to display results.
+    package      TEXT        NOT NULL DEFAULT '',
+    kind         TEXT        NOT NULL DEFAULT '',
+    symbol       TEXT        NOT NULL DEFAULT '',
+
     embed_model  TEXT        NOT NULL,
     embedding    vector(768) NOT NULL,
     indexed_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -36,3 +41,28 @@ CREATE INDEX IF NOT EXISTS idx_chunks_embedding
 -- Supports the delete-stale-rows pass at the end of indexing.
 CREATE INDEX IF NOT EXISTS idx_chunks_lookup
     ON chunks (corpus, embed_model, source_path);
+
+-- Added after the initial schema; ALTER keeps an existing database usable.
+ALTER TABLE chunks ADD COLUMN IF NOT EXISTS package TEXT NOT NULL DEFAULT '';
+ALTER TABLE chunks ADD COLUMN IF NOT EXISTS kind    TEXT NOT NULL DEFAULT '';
+ALTER TABLE chunks ADD COLUMN IF NOT EXISTS symbol  TEXT NOT NULL DEFAULT '';
+
+-- Keyword half of hybrid search.
+--
+-- Vector search cannot find a rare identifier: "kafkaQuerier" has no
+-- semantic neighbours, so cosine similarity ranks it no higher than any
+-- other Kafka code. Full-text search matches it exactly. The two fail in
+-- different places, which is why fusing them beats either alone.
+--
+-- The symbol and path are included in the document so a query naming a
+-- function finds that function's chunk even when the body never repeats
+-- the name.
+ALTER TABLE chunks ADD COLUMN IF NOT EXISTS tsv tsvector
+    GENERATED ALWAYS AS (
+        to_tsvector('english',
+            coalesce(symbol, '') || ' ' ||
+            replace(coalesce(source_path, ''), '/', ' ') || ' ' ||
+            coalesce(content, ''))
+    ) STORED;
+
+CREATE INDEX IF NOT EXISTS idx_chunks_tsv ON chunks USING gin (tsv);

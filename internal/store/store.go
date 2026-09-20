@@ -86,18 +86,23 @@ func (s *Store) Upsert(ctx context.Context, corpus, model string, chunks []chunk
 		batch.Queue(
 			`INSERT INTO chunks
 			   (corpus, source_path, chunk_index, start_line, end_line,
-			    content, content_hash, embed_model, embedding)
-			 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+			    content, content_hash, package, kind, symbol,
+			    embed_model, embedding)
+			 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
 			 ON CONFLICT (corpus, source_path, chunk_index, embed_model)
 			 DO UPDATE SET
 			   start_line   = EXCLUDED.start_line,
 			   end_line     = EXCLUDED.end_line,
 			   content      = EXCLUDED.content,
 			   content_hash = EXCLUDED.content_hash,
+			   package      = EXCLUDED.package,
+			   kind         = EXCLUDED.kind,
+			   symbol       = EXCLUDED.symbol,
 			   embedding    = EXCLUDED.embedding,
 			   indexed_at   = NOW()`,
 			corpus, c.SourcePath, c.Index, c.StartLine, c.EndLine,
-			c.Content, c.Hash, model, pgvector.NewVector(vectors[i]),
+			c.Content, c.Hash, c.Package, c.Kind, c.Symbol,
+			model, pgvector.NewVector(vectors[i]),
 		)
 	}
 
@@ -150,7 +155,22 @@ type Hit struct {
 	StartLine  int
 	EndLine    int
 	Content    string
-	Score      float64 // cosine similarity, 1.0 == identical
+	Package    string
+	Kind       string
+	Symbol     string
+
+	// Score is cosine similarity for vector search (1.0 == identical), or
+	// the fused RRF score for hybrid search. The two are not comparable
+	// across modes - RRF scores are tiny by construction.
+	Score float64
+}
+
+// Label renders the chunk's provenance for display.
+func (h Hit) Label() string {
+	if h.Symbol == "" {
+		return fmt.Sprintf("%s:%d-%d", h.SourcePath, h.StartLine, h.EndLine)
+	}
+	return fmt.Sprintf("%s:%d-%d %s %s", h.SourcePath, h.StartLine, h.EndLine, h.Kind, h.Symbol)
 }
 
 // Search returns the k chunks nearest to the query vector.
@@ -161,6 +181,7 @@ type Hit struct {
 func (s *Store) Search(ctx context.Context, corpus, model string, query []float32, k int) ([]Hit, error) {
 	rows, err := s.pool.Query(ctx,
 		`SELECT source_path, start_line, end_line, content,
+		        package, kind, symbol,
 		        1 - (embedding <=> $3) AS score
 		   FROM chunks
 		  WHERE corpus = $1 AND embed_model = $2
@@ -171,16 +192,106 @@ func (s *Store) Search(ctx context.Context, corpus, model string, query []float3
 		return nil, fmt.Errorf("store: search: %w", err)
 	}
 	defer rows.Close()
+	return scanHits(rows)
+}
 
+func scanHits(rows pgx.Rows) ([]Hit, error) {
 	var hits []Hit
 	for rows.Next() {
 		var h Hit
-		if err := rows.Scan(&h.SourcePath, &h.StartLine, &h.EndLine, &h.Content, &h.Score); err != nil {
+		if err := rows.Scan(&h.SourcePath, &h.StartLine, &h.EndLine, &h.Content,
+			&h.Package, &h.Kind, &h.Symbol, &h.Score); err != nil {
 			return nil, fmt.Errorf("store: scan hit: %w", err)
 		}
 		hits = append(hits, h)
 	}
 	return hits, rows.Err()
+}
+
+// rrfK is the Reciprocal Rank Fusion constant. 60 is the value from the
+// original paper and the usual default; it damps the influence of the very
+// top ranks so one ranker cannot dominate the fusion on its own.
+const rrfK = 60
+
+// SearchHybrid fuses vector search and Postgres full-text search.
+//
+// Each ranker contributes 1/(rrfK + rank) per document and the scores are
+// summed. RRF uses only the *rank* from each side, never the raw score,
+// which is what makes it work here: cosine similarity and ts_rank_cd are on
+// incomparable scales, and any attempt to weight them directly needs
+// tuning that would not survive a change of embedding model.
+//
+// candidates is how deep each ranker goes before fusion. It should exceed k
+// comfortably, or a document ranked 12th by vector and 1st by keyword never
+// enters the pool.
+func (s *Store) SearchHybrid(ctx context.Context, corpus, model string, query []float32, text string, k, candidates int) ([]Hit, error) {
+	rows, err := s.pool.Query(ctx,
+		`WITH vec AS (
+		     SELECT id, ROW_NUMBER() OVER (ORDER BY embedding <=> $3) AS rank
+		       FROM chunks
+		      WHERE corpus = $1 AND embed_model = $2
+		      ORDER BY embedding <=> $3
+		      LIMIT $5
+		 ),
+		 kw AS (
+		     SELECT c.id,
+		            ROW_NUMBER() OVER (ORDER BY ts_rank_cd(c.tsv, q) DESC) AS rank
+		       FROM chunks c, websearch_to_tsquery('english', $4) q
+		      WHERE c.corpus = $1 AND c.embed_model = $2 AND c.tsv @@ q
+		      ORDER BY ts_rank_cd(c.tsv, q) DESC
+		      LIMIT $5
+		 ),
+		 fused AS (
+		     SELECT id, SUM(1.0 / ($6 + rank)) AS score
+		       FROM (SELECT * FROM vec UNION ALL SELECT * FROM kw) u
+		      GROUP BY id
+		 )
+		 SELECT c.source_path, c.start_line, c.end_line, c.content,
+		        c.package, c.kind, c.symbol, f.score
+		   FROM fused f
+		   JOIN chunks c ON c.id = f.id
+		  ORDER BY f.score DESC
+		  LIMIT $7`,
+		corpus, model, pgvector.NewVector(query), text, candidates, rrfK, k)
+	if err != nil {
+		return nil, fmt.Errorf("store: hybrid search: %w", err)
+	}
+	defer rows.Close()
+	return scanHits(rows)
+}
+
+// SearchCandidates returns the top-n by vector distance with their
+// embeddings, so MMR can compute chunk-to-chunk similarity client-side.
+func (s *Store) SearchCandidates(ctx context.Context, corpus, model string, query []float32, n int) ([]Hit, [][]float32, error) {
+	rows, err := s.pool.Query(ctx,
+		`SELECT source_path, start_line, end_line, content,
+		        package, kind, symbol,
+		        1 - (embedding <=> $3) AS score, embedding
+		   FROM chunks
+		  WHERE corpus = $1 AND embed_model = $2
+		  ORDER BY embedding <=> $3
+		  LIMIT $4`,
+		corpus, model, pgvector.NewVector(query), n)
+	if err != nil {
+		return nil, nil, fmt.Errorf("store: search candidates: %w", err)
+	}
+	defer rows.Close()
+
+	var (
+		hits []Hit
+		vecs [][]float32
+	)
+	for rows.Next() {
+		var h Hit
+		var v pgvector.Vector
+		if err := rows.Scan(&h.SourcePath, &h.StartLine, &h.EndLine, &h.Content,
+			&h.Package, &h.Kind, &h.Symbol, &h.Score, &v); err != nil {
+			return nil, nil, fmt.Errorf("store: scan candidate: %w", err)
+		}
+		hits = append(hits, h)
+		vecs = append(vecs, v.Slice())
+	}
+	return hits, vecs, rows.Err()
 }
 
 // Stats reports what is currently indexed.
@@ -193,4 +304,52 @@ func (s *Store) Stats(ctx context.Context, corpus, model string) (chunks, files 
 		return 0, 0, fmt.Errorf("store: stats: %w", err)
 	}
 	return chunks, files, nil
+}
+
+// EmbeddingsFor fetches the vectors for already-retrieved hits, keyed by
+// (source_path, start_line). Needed by MMR after hybrid fusion, since the
+// fused query returns rows without their embeddings.
+func (s *Store) EmbeddingsFor(ctx context.Context, corpus, model string, hits []Hit) ([][]float32, error) {
+	paths := make([]string, len(hits))
+	starts := make([]int32, len(hits))
+	for i, h := range hits {
+		paths[i] = h.SourcePath
+		starts[i] = int32(h.StartLine)
+	}
+
+	rows, err := s.pool.Query(ctx,
+		`SELECT source_path, start_line, embedding
+		   FROM chunks
+		  WHERE corpus = $1 AND embed_model = $2
+		    AND (source_path, start_line) IN (
+		        SELECT unnest($3::text[]), unnest($4::int[])
+		    )`,
+		corpus, model, paths, starts)
+	if err != nil {
+		return nil, fmt.Errorf("store: embeddings for hits: %w", err)
+	}
+	defer rows.Close()
+
+	type key struct {
+		path  string
+		start int
+	}
+	byKey := make(map[key][]float32, len(hits))
+	for rows.Next() {
+		var k key
+		var v pgvector.Vector
+		if err := rows.Scan(&k.path, &k.start, &v); err != nil {
+			return nil, fmt.Errorf("store: scan embedding: %w", err)
+		}
+		byKey[k] = v.Slice()
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	out := make([][]float32, len(hits))
+	for i, h := range hits {
+		out[i] = byKey[key{h.SourcePath, h.StartLine}]
+	}
+	return out, nil
 }

@@ -1,0 +1,36 @@
+sweep · k=5 · candidates=30 · lambda=0.70 · 20 questions (19 scored)
+
+MODE        RECALL@5  MRR    PERFECT  ZERO  FACTUAL  CROSS-FILE  REASONING  LOCATIONAL  ELAPSED
+vector      0.629     0.791  8/19     2     0.667    0.198       0.694      1.000       632ms
+hybrid      0.603     0.807  7/19     2     0.417    0.323       0.694      1.000       434ms
+mmr         0.647     0.794  8/19     2     0.417    0.198       0.861      1.000       351ms
+hybrid+mmr  0.647     0.794  8/19     2     0.417    0.198       0.861      1.000       334ms
+
+per-question recall, vs vector baseline
+
+ID   CAT         vector  hybrid  mmr     hybrid+mmr
+q01  factual     0.50    0.50    0.50    0.50
+q02  factual     1.00    0.00 -  0.00 -  0.00 -
+q03  factual     0.50    0.50    0.50    0.50
+q04  locational  1.00    1.00    1.00    1.00
+q05  locational  1.00    1.00    1.00    1.00
+q06  locational  1.00    1.00    1.00    1.00
+q07  reasoning   0.67    0.67    0.67    0.67
+q08  reasoning   0.50    0.50    0.50    0.50
+q09  reasoning   0.00    0.00    1.00 +  1.00 +
+q10  reasoning   1.00    1.00    1.00    1.00
+q11  cross-file  0.12    0.12    0.12    0.12
+q12  cross-file  0.33    0.33    0.33    0.33
+q13  cross-file  0.33    0.33    0.33    0.33
+q14  cross-file  0.00    0.50 +  0.00    0.00
+q16  negative    0.33    0.33    0.67 +  0.67 +
+q17  negative    1.00    1.00    1.00    1.00
+q18  reasoning   1.00    1.00    1.00    1.00
+q19  reasoning   1.00    1.00    1.00    1.00
+q20  factual     0.67    0.67    0.67    0.67
+
+score separation (answerable floor vs negative ceiling)
+  vector       0.5980 vs 0.5375  holds
+  hybrid       0.0164 vs 0.0164  BROKEN, they overlap
+  mmr          0.5980 vs 0.5375  holds
+  hybrid+mmr   0.0164 vs 0.0164  BROKEN, they overlap

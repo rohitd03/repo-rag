@@ -1,10 +1,10 @@
 // Package chunk splits a repository into retrievable pieces.
 //
-// Phase 1 uses fixed-size line windows on purpose. It is the naive baseline,
-// and its failure modes are the point: it cuts functions in half, separates a
-// doc comment from the function it documents, and shifts every chunk boundary
-// in a file when you insert a line near the top. Phase 2 replaces this with
-// AST-aware chunking and measures the difference.
+// Chunking is structure-aware: Go files split at declaration boundaries via
+// go/ast, Markdown at headings, and anything else falls back to fixed-size
+// line windows. The Phase 1 fixed-size chunker averaged 82.7 lines per chunk
+// and made 21 of 48 files a single indivisible blob, so retrieval could only
+// discriminate between files rather than between functions.
 package chunk
 
 import (
@@ -31,8 +31,41 @@ type Chunk struct {
 	Index      int    // 0-based position within the file
 	StartLine  int    // 1-based, inclusive
 	EndLine    int    // 1-based, inclusive
-	Content    string
-	Hash       string // sha256 of Content
+	Content    string // the raw source text
+
+	// Provenance, used to enrich the embedded text and to display results.
+	Package string // Go package name, empty for non-Go
+	Kind    string // func, type, const, var, header, section, window
+	Symbol  string // "(*lagMonitor) updateLag", or a Markdown heading trail
+
+	Hash string // sha256 of EmbedText
+}
+
+// EmbedText is what actually gets embedded: the chunk body prefixed with a
+// short provenance header.
+//
+// This matters more than it looks. A bare function body says nothing about
+// where it lives, so a chunk holding `fetchCommittedOffsets` embeds as
+// generic offset-handling code. With the header it embeds as offset-handling
+// code *in the consumer package's lag monitor*, which is far closer to how
+// the question is phrased. Content stays raw so the stored text and line
+// numbers still match the file on disk.
+func (c Chunk) EmbedText() string {
+	var sb strings.Builder
+	sb.WriteString(c.SourcePath)
+	if c.Package != "" {
+		sb.WriteString(" · package ")
+		sb.WriteString(c.Package)
+	}
+	if c.Kind != "" && c.Symbol != "" {
+		sb.WriteString(" · ")
+		sb.WriteString(c.Kind)
+		sb.WriteString(" ")
+		sb.WriteString(c.Symbol)
+	}
+	sb.WriteString("\n\n")
+	sb.WriteString(c.Content)
+	return sb.String()
 }
 
 // includeExts and includeNames must stay in sync with scripts/pack-corpus.sh.
@@ -93,18 +126,38 @@ func Walk(root string) ([]string, error) {
 	return out, err
 }
 
-// File reads one file and splits it into fixed-size line windows.
+// File reads one file and splits it according to its type.
 func File(root, relPath string) ([]Chunk, error) {
 	raw, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(relPath)))
 	if err != nil {
 		return nil, fmt.Errorf("chunk: read %s: %w", relPath, err)
 	}
+	src := strings.ReplaceAll(string(raw), "\r\n", "\n")
 
-	lines := strings.Split(strings.ReplaceAll(string(raw), "\r\n", "\n"), "\n")
+	switch filepath.Ext(relPath) {
+	case ".go":
+		chunks, err := goFile(relPath, src)
+		if err == nil {
+			return chunks, nil
+		}
+		// A file that does not parse still belongs in the index; degrade
+		// to fixed windows rather than dropping it.
+		return fixedWindows(relPath, src), nil
+	case ".md":
+		return mdFile(relPath, src), nil
+	default:
+		return fixedWindows(relPath, src), nil
+	}
+}
+
+// fixedWindows is the Phase 1 chunker, kept as the fallback for file types
+// with no structure worth parsing (YAML, SQL, shell, Makefile).
+func fixedWindows(relPath, src string) []Chunk {
+	lines := strings.Split(src, "\n")
 
 	var (
 		chunks   []Chunk
-		start    int // 0-based index of the first line in the current window
+		start    int
 		idx      int
 		size     int
 		curLines []string
@@ -115,14 +168,16 @@ func File(root, relPath string) ([]Chunk, error) {
 		if strings.TrimSpace(body) == "" {
 			return
 		}
-		chunks = append(chunks, Chunk{
+		c := Chunk{
 			SourcePath: relPath,
 			Index:      idx,
 			StartLine:  start + 1,
 			EndLine:    endLine,
+			Kind:       "window",
 			Content:    body,
-			Hash:       hash(body),
-		})
+		}
+		c.Hash = hash(c.EmbedText())
+		chunks = append(chunks, c)
 		idx++
 	}
 
@@ -136,7 +191,6 @@ func File(root, relPath string) ([]Chunk, error) {
 
 		flush(i + 1)
 
-		// Walk backwards from the end of the window to build the overlap.
 		back, keep := 0, 0
 		for j := len(curLines) - 1; j >= 0 && back < overlapBytes; j-- {
 			back += len(curLines[j]) + 1
@@ -151,7 +205,7 @@ func File(root, relPath string) ([]Chunk, error) {
 		flush(len(lines))
 	}
 
-	return chunks, nil
+	return chunks
 }
 
 func hash(s string) string {

@@ -18,6 +18,7 @@ import (
 	"github.com/rohitd03/repo-rag/internal/answer"
 	"github.com/rohitd03/repo-rag/internal/chunk"
 	"github.com/rohitd03/repo-rag/internal/embed"
+	"github.com/rohitd03/repo-rag/internal/retrieve"
 	"github.com/rohitd03/repo-rag/internal/store"
 )
 
@@ -36,6 +37,10 @@ const (
 	// Ollama handles batches fine and this cuts HTTP round-trips
 	// substantially versus embedding one chunk at a time.
 	embedBatchSize = 32
+
+	defaultMode       = string(retrieve.ModeHybridMMR)
+	defaultCandidates = 30
+	defaultLambda     = 0.7
 )
 
 func main() {
@@ -72,9 +77,10 @@ func usage() {
 	fmt.Fprint(os.Stderr, `rag - ask questions about a source repository
 
   rag index -corpus NAME -root PATH    chunk, embed and store a repository
-  rag ask   -corpus NAME [-k N] QUESTION
+  rag ask   -corpus NAME [-k N] [-mode M] QUESTION
   rag stats -corpus NAME               what is currently indexed
-  rag eval  -corpus NAME [-k N] [-v]   score retrieval against the golden set
+  rag eval  -corpus NAME [-k N] [-mode M|-sweep] [-v]
+                                       score retrieval against the golden set
 
 environment:
   RAG_DATABASE_URL   default `+defaultDSN+`
@@ -120,6 +126,22 @@ func newGenerator() (answer.Generator, error) {
 	default:
 		return nil, fmt.Errorf("unknown RAG_GEN_BACKEND %q: want \"ollama\" or \"claude\"", backend)
 	}
+}
+
+// newRetriever builds a retriever for the given mode.
+func newRetriever(st *store.Store, corpus, mode string, candidates int, lambda float64) (*retrieve.Retriever, error) {
+	m, err := retrieve.ParseMode(mode)
+	if err != nil {
+		return nil, err
+	}
+	return &retrieve.Retriever{
+		Store:      st,
+		Embedder:   newEmbedder(),
+		Corpus:     corpus,
+		Mode:       m,
+		Candidates: candidates,
+		Lambda:     lambda,
+	}, nil
 }
 
 // ---------------------------------------------------------------- index
@@ -171,7 +193,10 @@ func runIndex(ctx context.Context, args []string) error {
 		}
 		texts := make([]string, len(pending))
 		for i, c := range pending {
-			texts[i] = c.Content
+			// EmbedText, not Content: the provenance header is what makes
+			// a bare function body identifiable as belonging to a
+			// particular file, package and symbol.
+			texts[i] = c.EmbedText()
 		}
 		vecs, err := emb.Embed(ctx, texts)
 		if err != nil {
@@ -238,6 +263,9 @@ func runAsk(ctx context.Context, args []string) error {
 	k := fs.Int("k", 5, "how many chunks to retrieve")
 	showSources := fs.Bool("show-sources", false, "print the retrieved chunks")
 	retrieveOnly := fs.Bool("retrieve-only", false, "skip generation, just show what was retrieved")
+	mode := fs.String("mode", defaultMode, "retrieval mode: vector | hybrid | mmr | hybrid+mmr")
+	candidates := fs.Int("candidates", defaultCandidates, "candidate pool depth before fusion/MMR")
+	lambda := fs.Float64("lambda", defaultLambda, "MMR relevance vs diversity, 1.0 = pure relevance")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -247,23 +275,22 @@ func runAsk(ctx context.Context, args []string) error {
 		return fmt.Errorf("ask: -corpus and a question are required")
 	}
 
-	emb := newEmbedder()
-
 	st, err := store.Open(ctx, env("RAG_DATABASE_URL", defaultDSN))
 	if err != nil {
 		return err
 	}
 	defer st.Close()
 
+	r, err := newRetriever(st, *corpus, *mode, *candidates, *lambda)
+	if err != nil {
+		return err
+	}
+
 	// The query goes through the same embedder as the documents did. Using
 	// a different model here would put the query in a different vector
 	// space and return confident nonsense rather than an error.
 	tRetrieve := time.Now()
-	qvecs, err := emb.Embed(ctx, []string{question})
-	if err != nil {
-		return err
-	}
-	hits, err := st.Search(ctx, *corpus, emb.Model(), qvecs[0], *k)
+	hits, err := r.Retrieve(ctx, question, *k)
 	if err != nil {
 		return err
 	}

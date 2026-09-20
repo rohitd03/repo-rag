@@ -10,6 +10,8 @@ help:
 	@echo "make test        run unit tests"
 	@echo "make index       index \$$ROOT as corpus \$$CORPUS"
 	@echo "make stats       show what is indexed"
+	@echo "make eval        score retrieval against the golden set"
+	@echo "make sweep       compare all four retrieval modes"
 	@echo "make baseline    regenerate eval/baseline/corpus.txt"
 	@echo "make smoke       one retrieval-only query, no API key needed"
 	@echo ""
@@ -37,6 +39,14 @@ test:
 .PHONY: index
 index: build
 	./bin/rag index -corpus $(CORPUS) -root $(ROOT)
+
+.PHONY: eval
+eval: build
+	./bin/rag eval -corpus $(CORPUS) -k 10 -mode hybrid+mmr -candidates 40
+
+.PHONY: sweep
+sweep: build
+	./bin/rag eval -corpus $(CORPUS) -k 10 -sweep -candidates 40
 
 .PHONY: stats
 stats: build

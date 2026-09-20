@@ -1,0 +1,32 @@
+########## k=5
+MODE        RECALL@5  MRR    PERFECT  ZERO  FACTUAL  CROSS-FILE  REASONING  LOCATIONAL  ELAPSED
+vector      0.629     0.791  8/19     2     0.667    0.198       0.694      1.000       515ms
+hybrid      0.603     0.807  7/19     2     0.417    0.323       0.694      1.000       250ms
+mmr         0.629     0.794  8/19     2     0.667    0.198       0.694      1.000       288ms
+hybrid+mmr  0.577     0.816  6/19     2     0.417    0.323       0.694      1.000       653ms
+
+
+########## k=10
+MODE        RECALL@10  MRR    PERFECT  ZERO  FACTUAL  CROSS-FILE  REASONING  LOCATIONAL  ELAPSED
+vector      0.700      0.797  9/19     1     0.667    0.198       0.861      1.000       285ms
+hybrid      0.726      0.794  9/19     0     0.667    0.323       0.861      1.000       281ms
+mmr         0.700      0.800  9/19     1     0.667    0.198       0.861      1.000       344ms
+hybrid+mmr  0.726      0.829  9/19     0     0.667    0.323       0.861      1.000       364ms
+
+
+########## k=15
+MODE        RECALL@15  MRR    PERFECT  ZERO  FACTUAL  CROSS-FILE  REASONING  LOCATIONAL  ELAPSED
+vector      0.700      0.797  9/19     1     0.667    0.198       0.861      1.000       305ms
+hybrid      0.726      0.820  9/19     0     0.667    0.323       0.861      1.000       315ms
+mmr         0.700      0.800  9/19     1     0.667    0.198       0.861      1.000       419ms
+hybrid+mmr  0.726      0.829  9/19     0     0.667    0.323       0.861      1.000       415ms
+
+
+########## k=20
+MODE        RECALL@20  MRR    PERFECT  ZERO  FACTUAL  CROSS-FILE  REASONING  LOCATIONAL  ELAPSED
+vector      0.717      0.797  10/19    1     0.667    0.198       0.861      1.000       318ms
+hybrid      0.743      0.820  10/19    0     0.667    0.323       0.861      1.000       315ms
+mmr         0.717      0.800  10/19    1     0.667    0.198       0.861      1.000       431ms
+hybrid+mmr  0.743      0.829  10/19    0     0.667    0.323       0.861      1.000       445ms
+
+
