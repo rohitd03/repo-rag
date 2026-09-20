@@ -59,16 +59,38 @@ You want `vector` in the list. The schema is applied automatically by the
 
 ---
 
-## 3. Anthropic API key (generation only)
+## 3. A generation model
+
+Generation defaults to a **local model via Ollama** — no API key, no spend:
+
+```bash
+ollama pull qwen2.5-coder:7b
+```
+
+Your RTX 4050 has 4 GB of VRAM, so the 7B (~4.7 GB at Q4) partially offloads
+to CPU and runs slower. `qwen2.5-coder:3b` (~1.9 GB) fits entirely on the GPU
+and is much faster to iterate with:
+
+```bash
+ollama pull qwen2.5-coder:3b
+RAG_GEN_MODEL=qwen2.5-coder:3b ./bin/rag ask -corpus cdc-pipeline "..."
+```
+
+Phase 4 compares them, so pulling both is worthwhile.
+
+### Optional: Claude instead
+
+A Claude subscription does **not** include API access — they are separately
+billed products. If you want to compare against a frontier model, create a key
+at [console.anthropic.com](https://console.anthropic.com) and:
 
 ```bash
 export ANTHROPIC_API_KEY=sk-ant-...
+export RAG_GEN_BACKEND=claude
 ```
 
-Or run `ant auth login` — the SDK picks up the stored profile with no env var.
-
-Only `rag ask` needs this. Indexing and retrieval work without it, which is
-why `make smoke` exists.
+A full 20-question eval run costs roughly $0.12 (Haiku 4.5) to $0.55 (Opus 5).
+Nothing else in the project needs a key.
 
 ---
 
@@ -82,7 +104,7 @@ make smoke     # retrieval only, no API key, no tokens spent
 ```
 
 If `make smoke` prints five chunks with similarity scores, everything except
-generation is working. Then:
+generation is working. Then (no API key needed):
 
 ```bash
 ./bin/rag ask -corpus cdc-pipeline -show-sources \
@@ -99,7 +121,8 @@ generation is working. Then:
 | `embedding 0 has N dims, schema expects 768` | Wrong embedding model pulled |
 | `is the postgres container up?` | `make up`, or Docker Desktop isn't running |
 | `type "vector" does not exist` | Using a plain `postgres` image instead of `pgvector/pgvector` |
-| `unauthorized` | No `ANTHROPIC_API_KEY` and no `ant auth login` profile |
+| `model "X" not pulled` | `ollama pull X` |
+| `unauthorized` | `RAG_GEN_BACKEND=claude` with no `ANTHROPIC_API_KEY` |
 | `no chunks found for corpus` | `make index` hasn't been run, or `-corpus` name is misspelled |
 
 ---
@@ -111,7 +134,8 @@ generation is working. Then:
 | `RAG_DATABASE_URL` | `postgres://rag:rag@localhost:5433/rag?sslmode=disable` |
 | `RAG_OLLAMA_URL` | `http://localhost:11434` |
 | `RAG_EMBED_MODEL` | `nomic-embed-text` |
-| `RAG_GEN_MODEL` | `claude-opus-5` |
+| `RAG_GEN_BACKEND` | `ollama` (or `claude`) |
+| `RAG_GEN_MODEL` | `qwen2.5-coder:7b` for ollama, `claude-opus-5` for claude |
 
 `RAG_GEN_MODEL` and `RAG_EMBED_MODEL` are the knobs Phase 4 sweeps. Changing
 the embedding model writes a separate set of rows rather than overwriting the

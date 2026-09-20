@@ -26,7 +26,12 @@ const (
 	defaultOllamaURL  = "http://localhost:11434"
 	defaultEmbedModel = "nomic-embed-text"
 	defaultEmbedDims  = 768
-	defaultGenModel   = "claude-opus-5"
+
+	// Local by default: no API key, no spend, and it works out of the box
+	// once Ollama is running. Set RAG_GEN_BACKEND=claude to compare.
+	defaultGenBackend     = "ollama"
+	defaultOllamaGenModel = "qwen2.5-coder:7b"
+	defaultClaudeModel    = "claude-opus-5"
 
 	// Ollama handles batches fine and this cuts HTTP round-trips
 	// substantially versus embedding one chunk at a time.
@@ -72,8 +77,9 @@ environment:
   RAG_DATABASE_URL   default `+defaultDSN+`
   RAG_OLLAMA_URL     default `+defaultOllamaURL+`
   RAG_EMBED_MODEL    default `+defaultEmbedModel+`
-  RAG_GEN_MODEL      default `+defaultGenModel+`
-  ANTHROPIC_API_KEY  required for `+"`ask`"+`
+  RAG_GEN_BACKEND    ollama (default) | claude
+  RAG_GEN_MODEL      default `+defaultOllamaGenModel+` (ollama) / `+defaultClaudeModel+` (claude)
+  ANTHROPIC_API_KEY  required only when RAG_GEN_BACKEND=claude
 `)
 }
 
@@ -90,6 +96,27 @@ func newEmbedder() embed.Embedder {
 		env("RAG_EMBED_MODEL", defaultEmbedModel),
 		defaultEmbedDims,
 	)
+}
+
+// newGenerator picks the generation backend.
+//
+// RAG_GEN_MODEL deliberately has no single default - it depends on the
+// backend, and defaulting a Claude model name into Ollama (or vice versa)
+// would fail with a confusing "model not found" rather than an obvious
+// configuration error.
+func newGenerator() (answer.Generator, error) {
+	backend := env("RAG_GEN_BACKEND", defaultGenBackend)
+	switch backend {
+	case "ollama":
+		return answer.NewOllama(
+			env("RAG_OLLAMA_URL", defaultOllamaURL),
+			env("RAG_GEN_MODEL", defaultOllamaGenModel),
+		), nil
+	case "claude":
+		return answer.NewClaude(env("RAG_GEN_MODEL", defaultClaudeModel)), nil
+	default:
+		return nil, fmt.Errorf("unknown RAG_GEN_BACKEND %q: want \"ollama\" or \"claude\"", backend)
+	}
 }
 
 // ---------------------------------------------------------------- index
@@ -254,16 +281,20 @@ func runAsk(ctx context.Context, args []string) error {
 		return nil
 	}
 
-	genModel := env("RAG_GEN_MODEL", defaultGenModel)
+	gen, err := newGenerator()
+	if err != nil {
+		return err
+	}
+
 	tGen := time.Now()
-	text, err := answer.NewClaude(genModel).Generate(ctx, question, hits)
+	text, err := gen.Generate(ctx, question, hits)
 	if err != nil {
 		return err
 	}
 
 	fmt.Println(text)
 	fmt.Printf("\n---\nretrieval %dms · generation %dms · k=%d · %s\n",
-		retrieveMS, time.Since(tGen).Milliseconds(), *k, genModel)
+		retrieveMS, time.Since(tGen).Milliseconds(), *k, gen.Model())
 	return nil
 }
 

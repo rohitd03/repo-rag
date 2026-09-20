@@ -108,10 +108,10 @@ verbatim, score 0/1/2 against `ground_truth`.
 
 | Concern | Choice | Why |
 |---|---|---|
-| Language | Go 1.22 | matches the corpus; single static binary |
+| Language | Go | matches the corpus; single static binary |
 | Vector store | Postgres + `pgvector` | no new database; hybrid search with `tsvector` in the same query |
 | Embeddings | Ollama (`nomic-embed-text`), local | free, private, swappable behind an interface |
-| Generation | Claude | swappable; compared against a smaller model in Phase 4 |
+| Generation | Ollama (`qwen2.5-coder`) local, Claude optional | local by default, no API key; Phase 4 compares local vs frontier |
 | Chunking | `go/ast` for Go, heading-aware for Markdown | chunks align to semantic units |
 
 The embedding and generation layers sit behind interfaces from day one,
