@@ -131,6 +131,84 @@ testing properly in Phase 3 rather than trusting four data points.
 
 ---
 
+## Generation — local `qwen2.5-coder:3b`
+
+Same five retrieved chunks, answered by a 3B model on the laptop GPU. Scored
+0/1/2 against `ground_truth`, by hand, on the same five questions.
+
+| Q | Score | Notes |
+|---|:---:|---|
+| q04 | **2** | Correct, and cited `internal/consumer/lag_monitor.go` |
+| q07 | 1 | Correct as far as the context went, but see below |
+| q12 | **2** | Both metrics named, messages-vs-seconds distinction right |
+| q15 | **2** | Clean refusal |
+| q16 | 1 | Right conclusion, did not name the three middlewares |
+
+**8/10 from a 3B model running locally.** Small sample, hand-scored, but not
+what the "small models hallucinate" prior would predict.
+
+### The negative cases held
+
+q15 asked how the project uses Redis. Retrieval handed over five irrelevant
+chunks — postman config, CI yaml, project docs. The answer:
+
+> The retrieved context does not cover Redis for caching.
+
+No fabrication, no `must_not_contain` hit. q16 likewise concluded there is no
+auth rather than inventing a middleware.
+
+This is the result to be careful about interpreting. It suggests grounding
+behaviour is driven more by the system prompt than by model size — the refusal
+clause is doing the work. Worth testing properly in Phase 3 by running the
+same questions with the refusal clause removed, rather than assuming.
+
+### q07 — a retrieval failure wearing a generation failure's clothes
+
+> The lag monitor defines a kafkaQuerier interface instead of using
+> kafka.Client directly to make the monitor unit-testable without a real
+> broker.
+
+Correct, and incomplete — it misses the `decisions.md` convention. But
+retrieval never surfaced `decisions.md`, so the model answered exactly what
+its context supported. **The generation is faithful; the retriever is at
+fault.** Telling these two apart is the single most useful diagnostic skill in
+this project, and it is invisible unless you record what was retrieved
+alongside what was answered.
+
+### q12 — recall is not answerability
+
+Retrieval scored 2/3, missing `debezium_handler.go` where
+`pipeline_lag_seconds` is computed. The predicted outcome was a lopsided
+answer. Instead the model got it right, inferring the relationship from the
+`Help` strings in `prometheus.go` — and the inference checks out, because
+`PipelineLastEventTimestamp` is set to exactly `event.TsMs / 1000`.
+
+So a recall miss did not produce an answer miss, because the missing source
+was partly redundant with a retrieved one. **Retrieval metrics alone would
+have predicted a failure that did not happen.** Phase 3 needs retrieval
+metrics *and* answer metrics; either on its own misleads.
+
+### Citation compliance is inconsistent
+
+The system prompt requires a source citation per claim. q04 complied, q07 did
+not. Small-model instruction-following, and cheap to measure — Phase 3 should
+track citation rate as its own metric rather than folding it into the score.
+
+### Generation latency
+
+| | |
+|---|---|
+| Cold, first call (model load into VRAM) | 69,476 ms |
+| Warm, short answer | 661 ms |
+| Warm, longer answer | 2,078–10,174 ms |
+
+The 3B fits entirely in the RTX 4050's 4 GB, so once loaded it is fast enough
+to iterate with. Identical output across two runs of q07 confirms
+`temperature: 0.1` is giving reproducibility, which the eval harness depends
+on.
+
+---
+
 ## Cross-cutting observations
 
 **A sticky chunk.** `alerts.yml:126-147` appeared in q04, q07 *and* q12 — three
