@@ -1,0 +1,399 @@
+# Golden question set for github.com/rohit/cdc-pipeline
+#
+# Every ground_truth below was verified by reading the source on 2026-09-20
+# at commit 78ab775 (branch feat/kafka-consumer-lag-monitoring).
+#
+# Field meanings:
+#   category          factual | locational | reasoning | cross-file | negative
+#   difficulty        easy | medium | hard
+#   ground_truth      the correct answer, in your own words
+#   expected_sources  files that MUST appear in retrieval for the answer to be
+#                     groundable. This is what recall@k is measured against.
+#   must_contain      substrings a correct answer is expected to include
+#   must_not_contain  hallucination guards - answer is WRONG if these appear
+#   why_it_is_hard    what this question is designed to stress
+
+corpus:
+  name: cdc-pipeline
+  root: ../../cdc-pipeline
+  commit: 78ab775
+  captured: 2026-09-20
+
+questions:
+
+  # ---------------------------------------------------------------- factual
+  - id: q01
+    question: "Which Kafka client library does this project use, and what version?"
+    category: factual
+    difficulty: easy
+    ground_truth: >
+      github.com/segmentio/kafka-go v0.4.47. It is used for the consumer
+      (kafka.Reader), the DLQ producer (kafka.Writer), and the admin client
+      (kafka.Client) that the lag monitor queries.
+    expected_sources: [go.mod, internal/consumer/kafka_consumer.go]
+    must_contain: ["segmentio/kafka-go"]
+    must_not_contain: ["confluent-kafka-go", "sarama", "franz-go"]
+    why_it_is_hard: "Baseline sanity check. If this fails, the pipeline is broken."
+
+  - id: q02
+    question: "What Kafka topic does the consumer read from by default, and what is the default DLQ topic?"
+    category: factual
+    difficulty: easy
+    ground_truth: >
+      Default topic is postgres.public.orders (env KAFKA_TOPIC) and the default
+      DLQ topic is postgres.public.orders.dlq (env KAFKA_DLQ_TOPIC). Both are
+      defaults in config.NewConfig, overridable by environment variable.
+    expected_sources: [internal/config/config.go]
+    must_contain: ["postgres.public.orders"]
+    must_not_contain: []
+    why_it_is_hard: "Config defaults live far from the code that consumes them."
+
+  - id: q03
+    question: "How many times is a failing message retried before it goes to the DLQ, and what is the backoff?"
+    category: factual
+    difficulty: medium
+    ground_truth: >
+      MaxRetries defaults to 3 (KAFKA_MAX_RETRIES). processWithRetry loops
+      attempt 0..MaxRetries inclusive, so 4 total attempts. Backoff is
+      exponential, RetryBaseMs * 2^(attempt-1), with RetryBaseMs defaulting to
+      100ms, giving 100ms / 200ms / 400ms sleeps before attempts 1, 2 and 3.
+    expected_sources:
+      - internal/consumer/kafka_consumer.go
+      - internal/config/config.go
+    must_contain: ["exponential"]
+    must_not_contain: []
+    why_it_is_hard: >
+      Needs two files (the loop and the defaults) AND an off-by-one reading of
+      "attempt <= MaxRetries". Models frequently answer 3 attempts, not 4.
+
+  # ------------------------------------------------------------- locational
+  - id: q04
+    question: "Which file calculates true Kafka consumer group lag, and how does it compute it?"
+    category: locational
+    difficulty: easy
+    ground_truth: >
+      internal/consumer/lag_monitor.go. It polls every 15s (lagPollInterval),
+      fetches partitions via Metadata, the high-watermark via ListOffsets with
+      kafka.LastOffset, the group committed offset via OffsetFetch, then sets
+      lag = latest - committed per partition on the KafkaConsumerLag gauge,
+      clamped at 0.
+    expected_sources: [internal/consumer/lag_monitor.go]
+    must_contain: ["lag_monitor.go"]
+    must_not_contain: []
+    why_it_is_hard: "Straight locational lookup. Should be easy for any RAG."
+
+  - id: q05
+    question: "Where is the order status state machine defined, and which transitions are legal?"
+    category: locational
+    difficulty: medium
+    ground_truth: >
+      isValidStatusTransition in internal/service/order_service.go. Legal moves,
+      pending -> confirmed|cancelled; confirmed -> shipped|cancelled;
+      shipped -> delivered; delivered and cancelled are terminal (empty slice).
+    expected_sources:
+      - internal/service/order_service.go
+      - internal/model/order.go
+    must_contain: ["isValidStatusTransition"]
+    must_not_contain: []
+    why_it_is_hard: >
+      The function is unexported and sits at the bottom of a long file, so a
+      fixed-size chunker will likely split the transitions map.
+
+  - id: q06
+    question: "Where are Prometheus metrics defined, and how are duplicate registrations avoided?"
+    category: locational
+    difficulty: medium
+    ground_truth: >
+      internal/metrics/prometheus.go. NewMetrics is a singleton guarded by
+      sync.Once writing to a package-level instance, so promauto
+      auto-registration runs only once and cannot panic on duplicate collector
+      registration.
+    expected_sources: [internal/metrics/prometheus.go]
+    must_contain: ["sync.Once"]
+    must_not_contain: []
+    why_it_is_hard: >
+      prometheus.go is ~200 lines of near-identical metric declarations. The
+      sync.Once detail is a tiny signal buried in highly repetitive text, a
+      classic embedding failure since every chunk looks the same.
+
+  # -------------------------------------------------------------- reasoning
+  - id: q07
+    question: "Why does the lag monitor define a kafkaQuerier interface instead of using kafka.Client directly?"
+    category: reasoning
+    difficulty: medium
+    ground_truth: >
+      To make the monitor unit-testable without a real broker. The doc comment
+      says exactly this, and lag_monitor_test.go substitutes a testify/mock
+      implementation. It also follows the repo rule in decisions.md that
+      interfaces are defined in the package that uses them, not the package
+      that implements them, which is why it is the narrow three-method subset
+      (Metadata, ListOffsets, OffsetFetch) that lagMonitor actually needs.
+    expected_sources:
+      - internal/consumer/lag_monitor.go
+      - decisions.md
+      - internal/consumer/lag_monitor_test.go
+    must_contain: ["test"]
+    must_not_contain: []
+    why_it_is_hard: >
+      The full answer needs the code comment AND the convention in decisions.md.
+      Pure vector search on "kafkaQuerier" is weak, it is a rare identifier with
+      no semantic neighbours. This is the strongest argument for hybrid
+      (BM25 + vector) search in the whole set.
+
+  - id: q08
+    question: "Why does the orders table set REPLICA IDENTITY FULL?"
+    category: reasoning
+    difficulty: medium
+    ground_truth: >
+      Debezium reads Postgres logical replication. With the default replica
+      identity, UPDATE and DELETE WAL records carry only the primary key, so the
+      before image would be missing. REPLICA IDENTITY FULL puts the whole old row
+      in the WAL, which is what makes event.Before populated, and handleDelete
+      depends on Before being non-nil.
+    expected_sources:
+      - internal/db/migrations/001_create_orders.sql
+      - internal/consumer/debezium_handler.go
+    must_contain: ["REPLICA IDENTITY FULL"]
+    must_not_contain: []
+    why_it_is_hard: >
+      Cross-language hop. The reason lives in a .sql file but the consequence
+      lives in Go, so a code-only chunker that skips .sql files fails outright.
+
+  - id: q09
+    question: "If a message fails all retries, why is its offset still committed?"
+    category: reasoning
+    difficulty: hard
+    ground_truth: >
+      Because the message has already been written to the DLQ, so it is not lost.
+      Committing prevents the consumer from re-reading the same poison message
+      forever and blocking the partition. The trade-off is that if the DLQ write
+      itself fails, the error is only logged and the offset is still committed,
+      so that message is dropped. Overall semantics are at-least-once.
+    expected_sources: [internal/consumer/kafka_consumer.go]
+    must_contain: ["DLQ"]
+    must_not_contain: ["exactly-once"]
+    why_it_is_hard: >
+      Requires reasoning about a failure path rather than quoting. The best
+      answer names the DLQ-write-fails edge case, which no comment states.
+
+  - id: q10
+    question: "Why does the lag monitor call updateLag once before entering its ticker loop?"
+    category: reasoning
+    difficulty: medium
+    ground_truth: >
+      So the KafkaConsumerLag gauge is populated immediately at startup instead
+      of being absent for the first 15 seconds. The inline comment says
+      "populate immediately on startup, do not wait for first tick". Without it,
+      a Prometheus scrape right after boot would see no series at all.
+    expected_sources: [internal/consumer/lag_monitor.go]
+    must_contain: ["startup"]
+    must_not_contain: []
+    why_it_is_hard: "Answer hinges on a single short inline comment mid-function."
+
+  # ------------------------------------------------------------- cross-file
+  - id: q11
+    question: "Trace an order end to end, from HTTP POST to it being searchable in Elasticsearch. Name each component."
+    category: cross-file
+    difficulty: hard
+    ground_truth: >
+      POST /api/v1/orders hits the chi router (internal/api/router.go) ->
+      OrderHandler.CreateOrder -> orderService.CreateOrder (generates a UUID,
+      defaults currency to USD, sets status pending) -> DB.CreateOrder INSERTs
+      into Postgres -> the write lands in the WAL -> Debezium (kafka-connect,
+      debezium/connect:2.5) reads logical replication and publishes to Kafka
+      topic postgres.public.orders -> Consumer.consumeMessage fetches it ->
+      DebeziumHandler.HandleMessage parses the flat payload and routes op="c"
+      to handleCreate -> OrderDBRow.ToOrder converts it -> esRepo.IndexOrder
+      writes to the orders index with refresh=true -> it is now returned by
+      GET /api/v1/search/orders.
+    expected_sources:
+      - internal/api/router.go
+      - internal/api/handler/order_handler.go
+      - internal/service/order_service.go
+      - internal/db/postgres.go
+      - internal/consumer/kafka_consumer.go
+      - internal/consumer/debezium_handler.go
+      - internal/elasticsearch/order_repository.go
+      - docker-compose.yml
+    must_contain: ["Debezium", "Kafka", "Elasticsearch"]
+    must_not_contain: []
+    why_it_is_hard: >
+      The benchmark question of this set. Needs 8 files in the top-k, which with
+      k=5 is structurally impossible. That is exactly the lesson, some questions
+      need multi-hop or agentic retrieval, not one similarity search.
+
+  - id: q12
+    question: "This project exposes two different lag metrics. What is the difference between them?"
+    category: cross-file
+    difficulty: hard
+    ground_truth: >
+      kafka_consumer_lag is a GaugeVec labelled (topic, partition), set by
+      lagMonitor, measuring OFFSET lag, how many messages behind the committed
+      offset is. pipeline_lag_seconds is a plain Gauge set by
+      DebeziumHandler.HandleMessage as time.Now().Unix() - event.TsMs/1000,
+      measuring TIME lag, how many wall-clock seconds behind the source database
+      change the pipeline is. One counts messages, the other counts seconds, and
+      they are written by different components.
+    expected_sources:
+      - internal/metrics/prometheus.go
+      - internal/consumer/lag_monitor.go
+      - internal/consumer/debezium_handler.go
+    must_contain: ["kafka_consumer_lag", "pipeline_lag_seconds"]
+    must_not_contain: []
+    why_it_is_hard: >
+      A comparison question. Both concepts embed almost identically to the word
+      "lag", so naive top-k returns five chunks about the same one. This is the
+      question that motivates diversity / MMR in retrieval.
+
+  - id: q13
+    question: "What happens to a Debezium delete event that arrives with a null before field?"
+    category: cross-file
+    difficulty: hard
+    ground_truth: >
+      handleDelete returns ErrMissingBeforeField wrapped with "delete operation
+      requires before field". That error bubbles to processWithRetry, which
+      retries 4 times total with exponential backoff (pointlessly, the payload
+      will never change), then consumeMessage writes the message to the DLQ topic
+      with the error string attached, increments
+      kafka_processing_errors_total{error_type="processing_error"} and
+      kafka_dlq_messages_total, and commits the offset anyway.
+    expected_sources:
+      - internal/consumer/debezium_handler.go
+      - internal/consumer/kafka_consumer.go
+      - internal/errors/errors.go
+    must_contain: ["DLQ"]
+    must_not_contain: []
+    why_it_is_hard: >
+      Three files, and the interesting insight (retrying a deterministic parse
+      failure is wasted work) is stated nowhere, it must be inferred.
+
+  - id: q14
+    question: "Which API endpoints read from Postgres and which read from Elasticsearch?"
+    category: cross-file
+    difficulty: medium
+    ground_truth: >
+      Postgres (writes and point reads), POST /api/v1/orders,
+      GET /api/v1/orders/{id}, PUT /api/v1/orders/{id}/status,
+      DELETE /api/v1/orders/{id}. Elasticsearch (read/search side),
+      GET /api/v1/search/orders and GET /api/v1/search/orders/{id}. It is a CQRS
+      split, Postgres is the write model, ES the read model, kept in sync by CDC
+      rather than by dual writes.
+    expected_sources:
+      - internal/api/router.go
+      - internal/api/handler/order_handler.go
+    must_contain: ["/api/v1/search/orders"]
+    must_not_contain: []
+    why_it_is_hard: >
+      router.go carries the comments that make the split explicit, so retrieval
+      returning only handlers gives a vaguer answer. Good test of whether the
+      right chunk beat a merely plausible one.
+
+  # --------------------------------------------------------------- negative
+  - id: q15
+    question: "How does this project use Redis for caching?"
+    category: negative
+    difficulty: easy
+    ground_truth: >
+      It does not. There is no Redis anywhere in the repo, not in go.mod, not in
+      docker-compose.yml, not in any source file. The correct response is to say
+      so, not to invent a caching layer.
+    expected_sources: []
+    must_contain: ["Redis"]
+    must_not_contain: ["go-redis", "redis.NewClient", "cache layer"]
+    why_it_is_hard: >
+      The question presupposes a false fact. Retrieval will still return the five
+      least irrelevant chunks and a weak prompt will happily build a Redis story
+      out of them. Tests refusal behaviour, which most RAG demos never check.
+
+  - id: q16
+    question: "Does the HTTP API require authentication? What auth middleware is applied?"
+    category: negative
+    difficulty: medium
+    ground_truth: >
+      There is none. NewRouter applies exactly three global middlewares, chi
+      Recoverer, middleware.Logging and middleware.Metrics. No JWT, no API key,
+      no bearer token. A real gap worth calling out, but the honest answer is
+      that the endpoints are unauthenticated.
+    expected_sources:
+      - internal/api/router.go
+      - internal/api/middleware/logging.go
+      - internal/api/middleware/metrics.go
+    must_contain: ["Recoverer"]
+    must_not_contain: ["JWT", "bearer", "OAuth"]
+    why_it_is_hard: >
+      Proving absence requires seeing the complete middleware chain. Retrieving
+      only logging.go tempts the model to assume auth exists elsewhere.
+
+  - id: q17
+    question: "Does the consumer use manual partition assignment or a consumer group?"
+    category: negative
+    difficulty: medium
+    ground_truth: >
+      A consumer group. kafka.NewReader is configured with GroupID (default
+      cdc-pipeline-consumer), so segmentio/kafka-go handles group coordination
+      and rebalancing, and Partition is never set manually. Note the lag monitor
+      separately uses a kafka.Client admin connection, which is not a group
+      member.
+    expected_sources:
+      - internal/consumer/kafka_consumer.go
+      - internal/consumer/lag_monitor.go
+    must_contain: ["GroupID"]
+    must_not_contain: []
+    why_it_is_hard: >
+      Two Kafka connections exist for different purposes, and a shallow answer
+      conflates the admin client with the group member.
+
+  # ------------------------------------------------------------------- hard
+  - id: q18
+    question: "What does the Debezium handler do when it receives an event with an empty op field?"
+    category: reasoning
+    difficulty: hard
+    ground_truth: >
+      Empty op is treated as a tombstone / end-of-snapshot marker. If After is
+      nil the event is logged at debug and skipped with a nil return, not an
+      error, so no retry and no DLQ. If After is non-nil it falls through to
+      handleCreate and is indexed like a normal create.
+    expected_sources: [internal/consumer/debezium_handler.go]
+    must_contain: ["tombstone"]
+    must_not_contain: []
+    why_it_is_hard: >
+      A case arm in the middle of a switch. A fixed-size chunker will cut the
+      switch in half and lose either the condition or the consequence.
+
+  - id: q19
+    question: "How does the lag monitor handle a partition the consumer group has never committed to?"
+    category: reasoning
+    difficulty: hard
+    ground_truth: >
+      OffsetFetch returns CommittedOffset = -1 for that case. fetchCommittedOffsets
+      clamps any negative committed offset to 0, so the reported lag equals the
+      full end offset of the partition. The doc comment on fetchCommittedOffsets
+      states this intent explicitly.
+    expected_sources: [internal/consumer/lag_monitor.go]
+    must_contain: ["-1"]
+    must_not_contain: []
+    why_it_is_hard: >
+      The answer is in a doc comment on an unexported helper deep in the file.
+      Tests whether chunking preserved comment-to-function attachment.
+
+  - id: q20
+    question: "Are database migrations applied automatically, and how are they embedded in the binary?"
+    category: factual
+    difficulty: medium
+    ground_truth: >
+      Yes, automatically at startup. cmd/server/main.go calls
+      database.RunMigrations before anything else starts. The SQL is compiled
+      into the binary with go:embed migrations/*.sql into migrationsFS.
+      RunMigrations reads the dir, filters .sql, sorts filenames alphabetically
+      for ordering, and Execs each one. There is no migration version table, so
+      every file re-runs on every boot, which is why 001_create_orders.sql is
+      written idempotently with IF NOT EXISTS and CREATE OR REPLACE.
+    expected_sources:
+      - internal/db/postgres.go
+      - cmd/server/main.go
+      - internal/db/migrations/001_create_orders.sql
+    must_contain: ["go:embed"]
+    must_not_contain: ["golang-migrate", "goose", "schema_migrations"]
+    why_it_is_hard: >
+      The best part of the answer, no version table hence the idempotent SQL, is
+      an inference across three files that no single chunk states.
