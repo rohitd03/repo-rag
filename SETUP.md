@@ -39,19 +39,21 @@ You want a JSON array of floats back.
 
 ## 2. Postgres with pgvector
 
-Docker Desktop is installed but was not running. Start it, then:
+Start Docker Desktop, then:
 
 ```bash
-make up
+make up          # terraform init + apply
 ```
 
-This runs `pgvector/pgvector:pg16` on **port 5433** — deliberately not 5432,
-so it can coexist with the `cdc-pipeline` database.
+Provisioned by Terraform ([`terraform/local`](terraform/local)), not
+docker-compose — see [terraform/README.md](terraform/README.md) for why. It
+runs `pgvector/pgvector:pg16` on **port 5433**, deliberately not 5432, so it
+coexists with the `cdc-pipeline` database.
 
 Check it:
 
 ```bash
-docker compose exec postgres psql -U rag -d rag -c "SELECT extname FROM pg_extension;"
+docker exec rag-postgres psql -U rag -d rag -c "SELECT extname FROM pg_extension;"
 ```
 
 You want `vector` in the list. The schema is applied automatically by the
@@ -119,7 +121,7 @@ generation is working. Then (no API key needed):
 |---|---|
 | `is ollama running?` | Ollama not started, or on a non-default port — set `RAG_OLLAMA_URL` |
 | `embedding 0 has N dims, schema expects 768` | Wrong embedding model pulled |
-| `is the postgres container up?` | `make up`, or Docker Desktop isn't running |
+| `is the postgres container up?` | `make up` (terraform apply), or Docker Desktop isn't running |
 | `type "vector" does not exist` | Using a plain `postgres` image instead of `pgvector/pgvector` |
 | `model "X" not pulled` | `ollama pull X` |
 | `unauthorized` | `RAG_GEN_BACKEND=claude` with no `ANTHROPIC_API_KEY` |

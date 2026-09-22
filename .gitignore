@@ -2,3 +2,13 @@ eval/baseline/corpus.txt
 bin/
 *.exe
 .env
+
+# Terraform
+**/.terraform/*
+*.tfstate
+*.tfstate.*
+*.tfplan
+tfplan
+crash.log
+*.tfvars
+!*.tfvars.example

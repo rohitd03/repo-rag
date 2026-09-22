@@ -110,6 +110,7 @@ verbatim, score 0/1/2 against `ground_truth`.
 |---|---|---|
 | Language | Go | matches the corpus; single static binary |
 | Vector store | Postgres + `pgvector` | no new database; hybrid search with `tsvector` in the same query |
+| Infrastructure | Terraform | `terraform/local` is applied and in use; `terraform/aws` is validated but never applied |
 | Embeddings | Ollama (`nomic-embed-text`), local | free, private, swappable behind an interface |
 | Generation | Ollama (`qwen2.5-coder`) local, Claude optional | local by default, no API key; Phase 4 compares local vs frontier |
 | Chunking | `go/ast` for Go, heading-aware for Markdown | chunks align to semantic units |
