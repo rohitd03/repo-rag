@@ -167,3 +167,23 @@ func TestCitationPatternDoesNotMatchProse(t *testing.T) {
 		t.Errorf("Citations = %v, want none from plain prose", got.Citations)
 	}
 }
+
+// must_contain entries may name alternative phrasings of the same fact.
+// Without this, an answer saying "once.Do" fails a check written as
+// "sync.Once" and the error count overstates real failures.
+func TestMustContainAlternatives(t *testing.T) {
+	q := Question{ID: "q06", MustContain: []string{"sync.Once|once.Do"}}
+
+	for _, answer := range []string{
+		"Guarded by sync.Once.",
+		"The once.Do function ensures it runs once.",
+	} {
+		if got := ScoreAnswer(q, answer, 1, nil); len(got.MissingRequired) != 0 {
+			t.Errorf("%q should satisfy the alternatives, got missing %v", answer, got.MissingRequired)
+		}
+	}
+
+	if got := ScoreAnswer(q, "It uses a mutex.", 1, nil); len(got.MissingRequired) != 1 {
+		t.Error("an answer matching neither alternative must still fail")
+	}
+}

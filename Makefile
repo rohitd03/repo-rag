@@ -13,6 +13,7 @@ help:
 	@echo "make stats       show what is indexed"
 	@echo "make eval        score retrieval against the golden set"
 	@echo "make sweep       compare all four retrieval modes"
+	@echo "make answer-eval score generated answers end to end"
 	@echo "make baseline    regenerate eval/baseline/corpus.txt"
 	@echo "make smoke       one retrieval-only query, no API key needed"
 	@echo "make tf-check    fmt + validate both terraform modules"
@@ -55,6 +56,10 @@ eval: build
 .PHONY: sweep
 sweep: build
 	./bin/rag eval -corpus $(CORPUS) -k 10 -sweep -candidates 40
+
+.PHONY: answer-eval
+answer-eval: build
+	./bin/rag answer-eval -corpus $(CORPUS) -k 10 -mode hybrid+mmr -candidates 40
 
 .PHONY: stats
 stats: build

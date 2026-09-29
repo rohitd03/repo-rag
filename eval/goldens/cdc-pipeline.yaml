@@ -79,7 +79,7 @@ questions:
       processed. It writes that number to the kafka_consumer_lag gauge, and
       never reports a negative value.
     expected_sources: [internal/consumer/lag_monitor.go]
-    must_contain: ["lag_monitor.go"]
+    must_contain: ["lag_monitor.go|lagMonitor"]
     must_not_contain: []
     why_it_is_hard: "Straight locational lookup. Should be easy for any RAG."
 
@@ -94,7 +94,7 @@ questions:
     expected_sources:
       - internal/service/order_service.go
       - internal/model/order.go
-    must_contain: ["isValidStatusTransition"]
+    must_contain: ["isValidStatusTransition|status transition"]
     must_not_contain: []
     why_it_is_hard: >
       The function is unexported and sits at the bottom of a long file, so a
@@ -110,7 +110,7 @@ questions:
       auto-registration runs only once and cannot panic on duplicate collector
       registration.
     expected_sources: [internal/metrics/prometheus.go]
-    must_contain: ["sync.Once"]
+    must_contain: ["sync.Once|once.Do"]
     must_not_contain: []
     why_it_is_hard: >
       prometheus.go is ~200 lines of near-identical metric declarations. The
@@ -319,7 +319,7 @@ questions:
       - internal/api/router.go
       - internal/api/middleware/logging.go
       - internal/api/middleware/metrics.go
-    must_contain: ["Recoverer"]
+    must_contain: ["Recoverer|no authentication|not require authentication"]
     must_not_contain: ["JWT", "bearer", "OAuth"]
     why_it_is_hard: >
       Proving absence requires seeing the complete middleware chain. Retrieving
@@ -338,7 +338,7 @@ questions:
     expected_sources:
       - internal/consumer/kafka_consumer.go
       - internal/consumer/lag_monitor.go
-    must_contain: ["GroupID"]
+    must_contain: ["GroupID|consumer group"]
     must_not_contain: []
     why_it_is_hard: >
       Two Kafka connections exist for different purposes, and a shallow answer

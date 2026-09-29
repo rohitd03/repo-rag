@@ -92,7 +92,7 @@ func ScoreAnswer(q Question, answer string, recall float64, retrieved []string) 
 
 	lower := strings.ToLower(answer)
 	for _, want := range q.MustContain {
-		if !strings.Contains(lower, strings.ToLower(want)) {
+		if !containsAny(lower, want) {
 			a.MissingRequired = append(a.MissingRequired, want)
 		}
 	}
@@ -134,6 +134,24 @@ func ScoreAnswer(q Question, answer string, recall float64, retrieved []string) 
 	sort.Strings(a.Citations)
 
 	return a
+}
+
+// containsAny treats "a|b" in a must_contain entry as alternatives.
+//
+// Added after the first Phase 3 run flagged q06 as missing "sync.Once" when
+// the answer said "once.Do" - the same fact in different words. An exact
+// string check turns a correct answer into a failure and overstates the
+// error count, so the golden set can now name the ways a fact may be
+// phrased. It stays a substring check, not a judge, so it remains
+// deterministic.
+func containsAny(lowerAnswer, want string) bool {
+	for _, alt := range strings.Split(want, "|") {
+		alt = strings.ToLower(strings.TrimSpace(alt))
+		if alt != "" && strings.Contains(lowerAnswer, alt) {
+			return true
+		}
+	}
+	return false
 }
 
 func matchesAnyBasename(p string, set map[string]bool) bool {

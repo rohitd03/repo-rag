@@ -33,8 +33,8 @@ This repo does both first, then builds the pipeline.
 | **0** | Golden question set + no-RAG baseline | ✅ built, awaiting scoring |
 | **1** | Naive RAG end to end — fixed chunks, one model, top-k | ✅ built, awaiting run |
 | **2** | Retrieval quality — AST chunking, hybrid search, MMR | ✅ recall 0.629 → 0.726 |
-| 3 | Answer-quality harness — faithfulness judge, citation rate | ⬜ |
-| 4 | Model/approach ROI comparison + written decision | ⬜ |
+| **3** | Answer-quality harness — judge, citations, failure attribution | ✅ 13 ok / 4 retrieval / 2 generation / 1 hallucination |
+| 4 | Model/approach ROI comparison + written decision | ⬜ next |
 
 ---
 
