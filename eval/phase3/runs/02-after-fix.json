@@ -1,0 +1,895 @@
+[
+  {
+    "Question": {
+      "ID": "q01",
+      "Question": "Which Kafka client library does this project use, and what version?",
+      "Category": "factual",
+      "Difficulty": "easy",
+      "GroundTruth": "github.com/segmentio/kafka-go v0.4.47. It is used for the consumer (kafka.Reader), the DLQ producer (kafka.Writer), and the admin client (kafka.Client) that the lag monitor queries.\n",
+      "ExpectedSources": [
+        "go.mod",
+        "internal/consumer/kafka_consumer.go"
+      ],
+      "MustContain": [
+        "segmentio/kafka-go"
+      ],
+      "MustNotContain": [
+        "confluent-kafka-go",
+        "sarama",
+        "franz-go"
+      ],
+      "WhyItIsHard": "Baseline sanity check. If this fails, the pipeline is broken."
+    },
+    "Answer": "This project uses the `segmentio/kafka-go` library.",
+    "Recall": 0.5,
+    "RetrievedSources": [
+      "CDC_Pipeline_Project.md",
+      "internal/consumer/kafka_consumer.go",
+      "internal/config/config.go",
+      "internal/consumer/lag_monitor.go",
+      "internal/consumer/kafka_consumer.go",
+      "CDC_Pipeline_Project.md",
+      "CDC_Pipeline_Project.md",
+      "CDC_Pipeline_Project.md",
+      "docs/alerting.md",
+      "CDC_Pipeline_Project.md"
+    ],
+    "MissingRequired": null,
+    "Violations": null,
+    "Citations": null,
+    "BadCitations": null,
+    "CitedCorrectly": false,
+    "Refused": false,
+    "JudgeCorrectness": 2,
+    "JudgeFaithful": true,
+    "JudgeReason": "The system's answer is correct and supported by the retrieved context.",
+    "Judged": true
+  },
+  {
+    "Question": {
+      "ID": "q02",
+      "Question": "What Kafka topic does the consumer read from by default, and what is the default DLQ topic?",
+      "Category": "factual",
+      "Difficulty": "easy",
+      "GroundTruth": "Default topic is postgres.public.orders (env KAFKA_TOPIC) and the default DLQ topic is postgres.public.orders.dlq (env KAFKA_DLQ_TOPIC). Both are defaults in config.NewConfig, overridable by environment variable.\n",
+      "ExpectedSources": [
+        "internal/config/config.go"
+      ],
+      "MustContain": [
+        "postgres.public.orders"
+      ],
+      "MustNotContain": [],
+      "WhyItIsHard": "Config defaults live far from the code that consumes them."
+    },
+    "Answer": "The consumer reads from the default Kafka topic `postgres.public.orders` and the default DLQ topic is `postgres.public.orders.dlq`.",
+    "Recall": 1,
+    "RetrievedSources": [
+      "CDC_Pipeline_Project.md",
+      "internal/consumer/kafka_consumer.go",
+      "k8s/configmap.yaml",
+      "docs/alerting.md",
+      "CDC_Pipeline_Project.md",
+      "CDC_Pipeline_Project.md",
+      "internal/config/config.go",
+      "internal/consumer/kafka_consumer.go",
+      "internal/consumer/kafka_consumer.go",
+      "README.md"
+    ],
+    "MissingRequired": null,
+    "Violations": null,
+    "Citations": null,
+    "BadCitations": null,
+    "CitedCorrectly": false,
+    "Refused": false,
+    "JudgeCorrectness": 2,
+    "JudgeFaithful": true,
+    "JudgeReason": "The answer correctly identifies the default Kafka topic and DLQ topic as specified in the retrieved context.",
+    "Judged": true
+  },
+  {
+    "Question": {
+      "ID": "q03",
+      "Question": "How many times is a failing message retried before it goes to the DLQ, and what is the backoff?",
+      "Category": "factual",
+      "Difficulty": "medium",
+      "GroundTruth": "MaxRetries defaults to 3 (KAFKA_MAX_RETRIES). processWithRetry loops attempt 0..MaxRetries inclusive, so 4 total attempts. Backoff is exponential, RetryBaseMs * 2^(attempt-1), with RetryBaseMs defaulting to 100ms, giving 100ms / 200ms / 400ms sleeps before attempts 1, 2 and 3.\n",
+      "ExpectedSources": [
+        "internal/consumer/kafka_consumer.go",
+        "internal/config/config.go"
+      ],
+      "MustContain": [
+        "exponential"
+      ],
+      "MustNotContain": [],
+      "WhyItIsHard": "Needs two files (the loop and the defaults) AND an off-by-one reading of \"attempt \u003c= MaxRetries\". Models frequently answer 3 attempts, not 4.\n"
+    },
+    "Answer": "A failing message is retried up to 3 times with exponential backoff. The backoff starts at 100ms and doubles with each retry (200ms, 400ms).",
+    "Recall": 0.5,
+    "RetrievedSources": [
+      "internal/consumer/kafka_consumer.go",
+      "README.md",
+      "internal/consumer/kafka_consumer.go",
+      "docs/alerting.md",
+      "alerts.yml",
+      "internal/consumer/lag_monitor_test.go",
+      "README.md",
+      "CDC_Pipeline_Project.md",
+      "alertmanager.yml",
+      "internal/consumer/lag_monitor_test.go"
+    ],
+    "MissingRequired": null,
+    "Violations": null,
+    "Citations": null,
+    "BadCitations": null,
+    "CitedCorrectly": false,
+    "Refused": false,
+    "JudgeCorrectness": 2,
+    "JudgeFaithful": true,
+    "JudgeReason": "The system's answer accurately states the number of retries and the backoff pattern, which are both supported by the retrieved context.",
+    "Judged": true
+  },
+  {
+    "Question": {
+      "ID": "q04",
+      "Question": "Which file calculates true Kafka consumer group lag, and how does it compute it?",
+      "Category": "locational",
+      "Difficulty": "easy",
+      "GroundTruth": "internal/consumer/lag_monitor.go. Every 15 seconds it asks Kafka two numbers for each partition: how many messages have been written to it, and how far the consumer group has got through them. Lag is the gap between those two, meaning the number of messages still waiting to be processed. It writes that number to the kafka_consumer_lag gauge, and never reports a negative value.\n",
+      "ExpectedSources": [
+        "internal/consumer/lag_monitor.go"
+      ],
+      "MustContain": [
+        "lag_monitor.go|lagMonitor"
+      ],
+      "MustNotContain": [],
+      "WhyItIsHard": "Straight locational lookup. Should be easy for any RAG."
+    },
+    "Answer": "The lagMonitor calculates true Kafka consumer group lag by polling the Kafka broker on a fixed interval. It computes the lag per partition by calculating the difference between the latest offset and the committed offset for each partition. The results are recorded on the KafkaConsumerLag gauge.",
+    "Recall": 1,
+    "RetrievedSources": [
+      "internal/consumer/lag_monitor.go",
+      "internal/consumer/lag_monitor_test.go",
+      "internal/consumer/lag_monitor.go",
+      "CDC_Pipeline_Project.md",
+      "internal/consumer/lag_monitor_test.go",
+      "docs/alerting.md",
+      "internal/consumer/lag_monitor_test.go",
+      "internal/consumer/lag_monitor_test.go",
+      "README.md",
+      "README.md"
+    ],
+    "MissingRequired": null,
+    "Violations": null,
+    "Citations": null,
+    "BadCitations": null,
+    "CitedCorrectly": false,
+    "Refused": false,
+    "JudgeCorrectness": 2,
+    "JudgeFaithful": true,
+    "JudgeReason": "The system's answer accurately describes how the lagMonitor calculates consumer group lag and where the results are recorded.",
+    "Judged": true
+  },
+  {
+    "Question": {
+      "ID": "q05",
+      "Question": "Where is the order status state machine defined, and which transitions are legal?",
+      "Category": "locational",
+      "Difficulty": "medium",
+      "GroundTruth": "isValidStatusTransition in internal/service/order_service.go. Legal moves, pending -\u003e confirmed|cancelled; confirmed -\u003e shipped|cancelled; shipped -\u003e delivered; delivered and cancelled are terminal (empty slice).\n",
+      "ExpectedSources": [
+        "internal/service/order_service.go",
+        "internal/model/order.go"
+      ],
+      "MustContain": [
+        "isValidStatusTransition|status transition"
+      ],
+      "MustNotContain": [],
+      "WhyItIsHard": "The function is unexported and sits at the bottom of a long file, so a fixed-size chunker will likely split the transitions map.\n"
+    },
+    "Answer": "The order status state machine is defined in the `internal/service/order_service.go` file (lines 201-223). The legal transitions are:\n\n- pending → confirmed, cancelled\n- confirmed → shipped, cancelled\n- shipped → delivered\n- delivered → (terminal, no transitions)\n- cancelled → (terminal, no transitions)",
+    "Recall": 1,
+    "RetrievedSources": [
+      "README.md",
+      "internal/model/order.go",
+      "CDC_Pipeline_Project.md",
+      "internal/service/order_service.go",
+      "internal/model/order.go",
+      "internal/service/order_service.go",
+      "internal/service/order_service.go",
+      "CDC_Pipeline_Project.md",
+      "tests/unit/order_handler_test.go",
+      "internal/api/handler/order_handler.go"
+    ],
+    "MissingRequired": [
+      "isValidStatusTransition|status transition"
+    ],
+    "Violations": null,
+    "Citations": [
+      "internal/service/order_service.go"
+    ],
+    "BadCitations": null,
+    "CitedCorrectly": true,
+    "Refused": false,
+    "JudgeCorrectness": 2,
+    "JudgeFaithful": true,
+    "JudgeReason": "The system's answer accurately states the location of the order status state machine and the legal transitions, which are both supported by the retrieved context.",
+    "Judged": true
+  },
+  {
+    "Question": {
+      "ID": "q06",
+      "Question": "Where are Prometheus metrics defined, and how are duplicate registrations avoided?",
+      "Category": "locational",
+      "Difficulty": "medium",
+      "GroundTruth": "internal/metrics/prometheus.go. NewMetrics is a singleton guarded by sync.Once writing to a package-level instance, so promauto auto-registration runs only once and cannot panic on duplicate collector registration.\n",
+      "ExpectedSources": [
+        "internal/metrics/prometheus.go"
+      ],
+      "MustContain": [
+        "sync.Once|once.Do"
+      ],
+      "MustNotContain": [],
+      "WhyItIsHard": "prometheus.go is ~200 lines of near-identical metric declarations. The sync.Once detail is a tiny signal buried in highly repetitive text, a classic embedding failure since every chunk looks the same.\n"
+    },
+    "Answer": "Prometheus metrics are defined in the `internal/metrics/prometheus.go` file. Duplicate registrations are avoided by using a singleton pattern implemented in the `once.Do` function, which ensures that the `Metrics` instance is created only once.",
+    "Recall": 1,
+    "RetrievedSources": [
+      "internal/metrics/prometheus.go",
+      "internal/metrics/prometheus.go",
+      "CDC_Pipeline_Project.md",
+      "internal/metrics/prometheus.go",
+      "internal/metrics/prometheus.go",
+      "README.md",
+      "prometheus.yml",
+      "CDC_Pipeline_Project.md",
+      "internal/consumer/lag_monitor.go",
+      "README.md"
+    ],
+    "MissingRequired": null,
+    "Violations": null,
+    "Citations": [
+      "internal/metrics/prometheus.go"
+    ],
+    "BadCitations": null,
+    "CitedCorrectly": true,
+    "Refused": false,
+    "JudgeCorrectness": 2,
+    "JudgeFaithful": true,
+    "JudgeReason": "The answer correctly identifies the file where Prometheus metrics are defined and explains how duplicate registrations are avoided using a singleton pattern.",
+    "Judged": true
+  },
+  {
+    "Question": {
+      "ID": "q07",
+      "Question": "Why does the lag monitor define a kafkaQuerier interface instead of using kafka.Client directly?",
+      "Category": "reasoning",
+      "Difficulty": "medium",
+      "GroundTruth": "To make the monitor unit-testable without a real broker. The doc comment says exactly this, and lag_monitor_test.go substitutes a testify/mock implementation. It also follows the repo rule in decisions.md that interfaces are defined in the package that uses them, not the package that implements them, which is why it is the narrow three-method subset (Metadata, ListOffsets, OffsetFetch) that lagMonitor actually needs.\n",
+      "ExpectedSources": [
+        "internal/consumer/lag_monitor.go",
+        "decisions.md",
+        "internal/consumer/lag_monitor_test.go"
+      ],
+      "MustContain": [
+        "test"
+      ],
+      "MustNotContain": [],
+      "WhyItIsHard": "The full answer needs the code comment AND the convention in decisions.md. Pure vector search on \"kafkaQuerier\" is weak, it is a rare identifier with no semantic neighbours. This is the strongest argument for hybrid (BM25 + vector) search in the whole set.\n"
+    },
+    "Answer": "The lag monitor defines a kafkaQuerier interface instead of using kafka.Client directly to make the monitor unit-testable without a real broker. This is because the interface allows for mocking the kafka.Client in tests, which helps in isolating the lag monitor's behavior from the actual Kafka client implementation.",
+    "Recall": 0.6666666666666666,
+    "RetrievedSources": [
+      "internal/consumer/lag_monitor.go",
+      "internal/consumer/lag_monitor.go",
+      "internal/consumer/lag_monitor_test.go",
+      "internal/consumer/lag_monitor_test.go",
+      "internal/consumer/lag_monitor.go",
+      "internal/consumer/lag_monitor_test.go",
+      "internal/consumer/lag_monitor.go",
+      "internal/consumer/kafka_consumer.go",
+      "internal/consumer/lag_monitor_test.go",
+      "internal/consumer/lag_monitor.go"
+    ],
+    "MissingRequired": null,
+    "Violations": null,
+    "Citations": null,
+    "BadCitations": null,
+    "CitedCorrectly": false,
+    "Refused": false,
+    "JudgeCorrectness": 2,
+    "JudgeFaithful": true,
+    "JudgeReason": "The system's answer accurately reflects the key points from the retrieved context.",
+    "Judged": true
+  },
+  {
+    "Question": {
+      "ID": "q08",
+      "Question": "Why does the orders table set REPLICA IDENTITY FULL?",
+      "Category": "reasoning",
+      "Difficulty": "medium",
+      "GroundTruth": "Debezium reads Postgres logical replication. With the default replica identity, UPDATE and DELETE WAL records carry only the primary key, so the before image would be missing. REPLICA IDENTITY FULL puts the whole old row in the WAL, which is what makes event.Before populated, and handleDelete depends on Before being non-nil.\n",
+      "ExpectedSources": [
+        "internal/db/migrations/001_create_orders.sql",
+        "internal/consumer/debezium_handler.go"
+      ],
+      "MustContain": [
+        "REPLICA IDENTITY FULL"
+      ],
+      "MustNotContain": [],
+      "WhyItIsHard": "Cross-language hop. The reason lives in a .sql file but the consequence lives in Go, so a code-only chunker that skips .sql files fails outright.\n"
+    },
+    "Answer": "The orders table sets REPLICA IDENTITY FULL to enable logical replication in PostgreSQL. This ensures that when data is replicated from the primary database to the replica, the entire row is included in the replication stream, including the updated_at column, which is crucial for maintaining the correct order of updates in the replica.",
+    "Recall": 0.5,
+    "RetrievedSources": [
+      "internal/db/migrations/001_create_orders.sql",
+      "internal/elasticsearch/order_repository.go",
+      "internal/elasticsearch/order_repository.go",
+      "internal/model/order.go",
+      "CDC_Pipeline_Project.md",
+      "internal/model/order.go",
+      "internal/service/order_service.go",
+      "CDC_Pipeline_Project.md",
+      "internal/model/order.go",
+      "internal/service/order_service.go"
+    ],
+    "MissingRequired": null,
+    "Violations": null,
+    "Citations": null,
+    "BadCitations": null,
+    "CitedCorrectly": false,
+    "Refused": false,
+    "JudgeCorrectness": 2,
+    "JudgeFaithful": true,
+    "JudgeReason": "The answer correctly states that the orders table sets REPLICA IDENTITY FULL to enable logical replication in PostgreSQL and explains why it is crucial for maintaining the correct order of updates in the replica.",
+    "Judged": true
+  },
+  {
+    "Question": {
+      "ID": "q09",
+      "Question": "If a message fails all retries, why is its offset still committed?",
+      "Category": "reasoning",
+      "Difficulty": "hard",
+      "GroundTruth": "Because the message has already been written to the DLQ, so it is not lost. Committing prevents the consumer from re-reading the same poison message forever and blocking the partition. The trade-off is that if the DLQ write itself fails, the error is only logged and the offset is still committed, so that message is dropped. Overall semantics are at-least-once.\n",
+      "ExpectedSources": [
+        "internal/consumer/kafka_consumer.go"
+      ],
+      "MustContain": [
+        "DLQ"
+      ],
+      "MustNotContain": [
+        "exactly-once"
+      ],
+      "WhyItIsHard": "Requires reasoning about a failure path rather than quoting. The best answer names the DLQ-write-fails edge case, which no comment states.\n"
+    },
+    "Answer": "The retrieved context does not cover why a message fails all retries and its offset is still committed.",
+    "Recall": 1,
+    "RetrievedSources": [
+      "internal/consumer/lag_monitor_test.go",
+      "README.md",
+      "internal/consumer/lag_monitor_test.go",
+      "internal/consumer/lag_monitor.go",
+      "README.md",
+      "CDC_Pipeline_Project.md",
+      "internal/consumer/lag_monitor_test.go",
+      "CDC_Pipeline_Project.md",
+      "internal/consumer/kafka_consumer.go",
+      "alertmanager.yml"
+    ],
+    "MissingRequired": [
+      "DLQ"
+    ],
+    "Violations": null,
+    "Citations": null,
+    "BadCitations": null,
+    "CitedCorrectly": false,
+    "Refused": true,
+    "JudgeCorrectness": 0,
+    "JudgeFaithful": true,
+    "JudgeReason": "The system's answer is correct because it accurately states that the retrieved context does not cover the specific question asked.",
+    "Judged": true
+  },
+  {
+    "Question": {
+      "ID": "q10",
+      "Question": "Why does the lag monitor call updateLag once before entering its ticker loop?",
+      "Category": "reasoning",
+      "Difficulty": "medium",
+      "GroundTruth": "So the KafkaConsumerLag gauge is populated immediately at startup instead of being absent for the first 15 seconds. The inline comment says \"populate immediately on startup, do not wait for first tick\". Without it, a Prometheus scrape right after boot would see no series at all.\n",
+      "ExpectedSources": [
+        "internal/consumer/lag_monitor.go"
+      ],
+      "MustContain": [
+        "startup"
+      ],
+      "MustNotContain": [],
+      "WhyItIsHard": "Answer hinges on a single short inline comment mid-function."
+    },
+    "Answer": "The lag monitor calls `updateLag` once immediately on startup before entering its ticker loop. This is done to populate the initial lag values immediately, ensuring that the lag monitoring starts with accurate data.",
+    "Recall": 1,
+    "RetrievedSources": [
+      "internal/consumer/lag_monitor.go",
+      "internal/consumer/lag_monitor.go",
+      "internal/consumer/lag_monitor_test.go",
+      "internal/consumer/lag_monitor.go",
+      "internal/consumer/lag_monitor_test.go",
+      "internal/consumer/lag_monitor.go",
+      "alerts.yml",
+      "internal/consumer/lag_monitor_test.go",
+      "internal/consumer/lag_monitor_test.go",
+      "internal/consumer/lag_monitor.go"
+    ],
+    "MissingRequired": null,
+    "Violations": null,
+    "Citations": null,
+    "BadCitations": null,
+    "CitedCorrectly": false,
+    "Refused": false,
+    "JudgeCorrectness": 2,
+    "JudgeFaithful": true,
+    "JudgeReason": "The system's answer accurately reflects the information provided in the retrieved context.",
+    "Judged": true
+  },
+  {
+    "Question": {
+      "ID": "q11",
+      "Question": "Trace an order end to end, from HTTP POST to it being searchable in Elasticsearch. Name each component.",
+      "Category": "cross-file",
+      "Difficulty": "hard",
+      "GroundTruth": "POST /api/v1/orders hits the chi router (internal/api/router.go) -\u003e OrderHandler.CreateOrder -\u003e orderService.CreateOrder (generates a UUID, defaults currency to USD, sets status pending) -\u003e DB.CreateOrder INSERTs into Postgres -\u003e the write lands in the WAL -\u003e Debezium (kafka-connect, debezium/connect:2.5) reads logical replication and publishes to Kafka topic postgres.public.orders -\u003e Consumer.consumeMessage fetches it -\u003e DebeziumHandler.HandleMessage parses the flat payload and routes op=\"c\" to handleCreate -\u003e OrderDBRow.ToOrder converts it -\u003e esRepo.IndexOrder writes to the orders index with refresh=true -\u003e it is now returned by GET /api/v1/search/orders.\n",
+      "ExpectedSources": [
+        "internal/api/router.go",
+        "internal/api/handler/order_handler.go",
+        "internal/service/order_service.go",
+        "internal/db/postgres.go",
+        "internal/consumer/kafka_consumer.go",
+        "internal/consumer/debezium_handler.go",
+        "internal/elasticsearch/order_repository.go",
+        "docker-compose.yml"
+      ],
+      "MustContain": [
+        "Debezium",
+        "Kafka",
+        "Elasticsearch"
+      ],
+      "MustNotContain": [],
+      "WhyItIsHard": "The benchmark question of this set. Needs 8 files in the top-k, which with k=5 is structurally impossible. That is exactly the lesson, some questions need multi-hop or agentic retrieval, not one similarity search.\n"
+    },
+    "Answer": "To trace an order end to end from HTTP POST to it being searchable in Elasticsearch, we need to follow these steps:\n\n1. **HTTP POST Request**: The client sends an HTTP POST request to the `/api/v1/orders` endpoint with the order details.\n   - **Component**: `internal/http/orders_handler.go` (lines 100-120)\n\n2. **Order Creation**: The `orders_handler.go` file processes the incoming request and creates a new order in the application.\n   - **Component**: `internal/orders/orders_service.go` (lines 50-70)\n\n3. **Order Indexing**: The `orders_service.go` file then indexes the newly created order into Elasticsearch using the `orderRepository`.\n   - **Component**: `internal/elasticsearch/order_repository.go` (lines 164-254)\n\n4. **Order Searchability**: The order is now searchable through the `/api/v1/search/orders` endpoint.\n   - **Component**: `internal/elasticsearch/order_repository.go` (lines 41-54)\n\n5. **Search Request**: The client sends a GET request to the `/api/v1/search/orders` endpoint with search criteria.\n   - **Component**: `internal/http/orders_handler.go` (lines 120-140)\n\n6. **Search Execution**: The `orders_handler.go` file processes the search request and calls the `SearchOrders` method of the `orderRepository`.\n   - **Component**: `internal/elasticsearch/order_repository.go` (lines 164-254)\n\n7. **Search Response**: The `orderRepository` executes the search query and returns the results.\n   - **Component**: `internal/elasticsearch/order_repository.go` (lines 164-254)\n\n8. **HTTP Response**: The `orders_handler.go` file formats the search results and sends an HTTP response back to the client.\n   - **Component**: `internal/http/orders_handler.go` (lines 140-160)\n\nThis sequence of components ensures that an order is created, indexed, and searchable through the Elasticsearch repository.",
+    "Recall": 0.125,
+    "RetrievedSources": [
+      "internal/elasticsearch/order_repository.go",
+      "internal/elasticsearch/order_repository.go",
+      "CDC_Pipeline_Project.md",
+      "internal/elasticsearch/order_repository.go",
+      "internal/elasticsearch/order_repository.go",
+      "CDC_Pipeline_Project.md",
+      "internal/elasticsearch/order_repository.go",
+      "internal/elasticsearch/order_repository.go",
+      "README.md",
+      "internal/elasticsearch/order_repository.go"
+    ],
+    "MissingRequired": [
+      "Debezium",
+      "Kafka"
+    ],
+    "Violations": null,
+    "Citations": [
+      "internal/elasticsearch/order_repository.go",
+      "internal/http/orders_handler.go",
+      "internal/orders/orders_service.go",
+      "orders_handler.go",
+      "orders_service.go"
+    ],
+    "BadCitations": [
+      "internal/http/orders_handler.go",
+      "orders_handler.go",
+      "internal/orders/orders_service.go",
+      "orders_service.go"
+    ],
+    "CitedCorrectly": true,
+    "Refused": false,
+    "JudgeCorrectness": 0,
+    "JudgeFaithful": false,
+    "JudgeReason": "The system's answer does not accurately trace the order end to end from HTTP POST to it being searchable in Elasticsearch. It misses several key components and steps.",
+    "Judged": true
+  },
+  {
+    "Question": {
+      "ID": "q12",
+      "Question": "This project exposes two different lag metrics. What is the difference between them?",
+      "Category": "cross-file",
+      "Difficulty": "hard",
+      "GroundTruth": "kafka_consumer_lag is a GaugeVec labelled (topic, partition), set by lagMonitor, measuring OFFSET lag, how many messages behind the committed offset is. pipeline_lag_seconds is a plain Gauge set by DebeziumHandler.HandleMessage as time.Now().Unix() - event.TsMs/1000, measuring TIME lag, how many wall-clock seconds behind the source database change the pipeline is. One counts messages, the other counts seconds, and they are written by different components.\n",
+      "ExpectedSources": [
+        "internal/metrics/prometheus.go",
+        "internal/consumer/lag_monitor.go",
+        "internal/consumer/debezium_handler.go"
+      ],
+      "MustContain": [
+        "kafka_consumer_lag",
+        "pipeline_lag_seconds"
+      ],
+      "MustNotContain": [],
+      "WhyItIsHard": "A comparison question. Both concepts embed almost identically to the word \"lag\", so naive top-k returns five chunks about the same one. This is the question that motivates diversity / MMR in retrieval.\n"
+    },
+    "Answer": "The project exposes two different lag metrics: the true consumer group lag per partition and the consumer lag in terms of the number of messages. The true consumer group lag is calculated as the difference between the latest offset and the committed offset for each partition, while the consumer lag is the number of messages that have been committed but not yet processed by the consumer group.",
+    "Recall": 0.3333333333333333,
+    "RetrievedSources": [
+      "internal/consumer/lag_monitor.go",
+      "internal/consumer/lag_monitor.go",
+      "internal/consumer/lag_monitor.go",
+      "internal/consumer/lag_monitor_test.go",
+      "internal/consumer/lag_monitor_test.go",
+      "internal/consumer/lag_monitor.go",
+      "internal/consumer/lag_monitor.go",
+      "CDC_Pipeline_Project.md",
+      "internal/consumer/lag_monitor.go",
+      "internal/consumer/lag_monitor.go"
+    ],
+    "MissingRequired": [
+      "kafka_consumer_lag",
+      "pipeline_lag_seconds"
+    ],
+    "Violations": null,
+    "Citations": null,
+    "BadCitations": null,
+    "CitedCorrectly": false,
+    "Refused": false,
+    "JudgeCorrectness": 2,
+    "JudgeFaithful": true,
+    "JudgeReason": "The system's answer accurately describes the two lag metrics and their calculations, which are consistent with the information provided in the retrieved context.",
+    "Judged": true
+  },
+  {
+    "Question": {
+      "ID": "q13",
+      "Question": "What happens to a Debezium delete event that arrives with a null before field?",
+      "Category": "cross-file",
+      "Difficulty": "hard",
+      "GroundTruth": "handleDelete returns ErrMissingBeforeField wrapped with \"delete operation requires before field\". That error bubbles to processWithRetry, which retries 4 times total with exponential backoff (pointlessly, the payload will never change), then consumeMessage writes the message to the DLQ topic with the error string attached, increments kafka_processing_errors_total{error_type=\"processing_error\"} and kafka_dlq_messages_total, and commits the offset anyway.\n",
+      "ExpectedSources": [
+        "internal/consumer/debezium_handler.go",
+        "internal/consumer/kafka_consumer.go",
+        "internal/errors/errors.go"
+      ],
+      "MustContain": [
+        "DLQ"
+      ],
+      "MustNotContain": [],
+      "WhyItIsHard": "Three files, and the interesting insight (retrying a deterministic parse failure is wasted work) is stated nowhere, it must be inferred.\n"
+    },
+    "Answer": "When a Debezium delete event arrives with a null before field, the `handleDelete` function logs an error and returns an error with the message \"missing before field in delete event\". This is because the `handleDelete` function requires the `Before` field to be non-nil to process the delete operation correctly.",
+    "Recall": 0.3333333333333333,
+    "RetrievedSources": [
+      "internal/consumer/debezium_handler.go",
+      "tests/unit/debezium_handler_test.go",
+      "internal/consumer/debezium_handler.go",
+      "tests/unit/debezium_handler_test.go",
+      "internal/model/order.go",
+      "CDC_Pipeline_Project.md",
+      "internal/consumer/debezium_handler.go",
+      "internal/consumer/debezium_handler.go",
+      "internal/consumer/debezium_handler.go",
+      "CDC_Pipeline_Project.md"
+    ],
+    "MissingRequired": [
+      "DLQ"
+    ],
+    "Violations": null,
+    "Citations": null,
+    "BadCitations": null,
+    "CitedCorrectly": false,
+    "Refused": false,
+    "JudgeCorrectness": 1,
+    "JudgeFaithful": true,
+    "JudgeReason": "The system's answer is directionally correct and supported by the retrieved context.",
+    "Judged": true
+  },
+  {
+    "Question": {
+      "ID": "q14",
+      "Question": "Which API endpoints read from Postgres and which read from Elasticsearch?",
+      "Category": "cross-file",
+      "Difficulty": "medium",
+      "GroundTruth": "Postgres (writes and point reads), POST /api/v1/orders, GET /api/v1/orders/{id}, PUT /api/v1/orders/{id}/status, DELETE /api/v1/orders/{id}. Elasticsearch (read/search side), GET /api/v1/search/orders and GET /api/v1/search/orders/{id}. It is a CQRS split, Postgres is the write model, ES the read model, kept in sync by CDC rather than by dual writes.\n",
+      "ExpectedSources": [
+        "internal/api/router.go",
+        "internal/api/handler/order_handler.go"
+      ],
+      "MustContain": [
+        "/api/v1/search/orders"
+      ],
+      "MustNotContain": [],
+      "WhyItIsHard": "router.go carries the comments that make the split explicit, so retrieval returning only handlers gives a vaguer answer. Good test of whether the right chunk beat a merely plausible one.\n"
+    },
+    "Answer": "The API endpoints that read from Postgres are:\n\n- `/api/v1/orders/{id}` (Get order by ID)\n- `/api/v1/orders/status/{id}` (Update order status)\n- `/api/v1/orders/{id}` (Delete order)\n\nThe API endpoints that read from Elasticsearch are:\n\n- `/api/v1/search/orders` (Search orders)\n- `/api/v1/search/orders/{id}` (Get order from Elasticsearch)",
+    "Recall": 0.5,
+    "RetrievedSources": [
+      "internal/api/router.go",
+      "README.md",
+      "README.md",
+      "CDC_Pipeline_Project.md",
+      "README.md",
+      "README.md",
+      "README.md",
+      "README.md",
+      "README.md",
+      "README.md"
+    ],
+    "MissingRequired": null,
+    "Violations": null,
+    "Citations": null,
+    "BadCitations": null,
+    "CitedCorrectly": false,
+    "Refused": false,
+    "JudgeCorrectness": 1,
+    "JudgeFaithful": false,
+    "JudgeReason": "The system's answer is partially correct but contains errors and is not faithful to the retrieved context.",
+    "Judged": true
+  },
+  {
+    "Question": {
+      "ID": "q15",
+      "Question": "How does this project use Redis for caching?",
+      "Category": "negative",
+      "Difficulty": "easy",
+      "GroundTruth": "It does not. There is no Redis anywhere in the repo, not in go.mod, not in docker-compose.yml, not in any source file. The correct response is to say so, not to invent a caching layer.\n",
+      "ExpectedSources": [],
+      "MustContain": [
+        "Redis"
+      ],
+      "MustNotContain": [
+        "go-redis",
+        "redis.NewClient",
+        "cache layer"
+      ],
+      "WhyItIsHard": "The question presupposes a false fact. Retrieval will still return the five least irrelevant chunks and a weak prompt will happily build a Redis story out of them. Tests refusal behaviour, which most RAG demos never check.\n"
+    },
+    "Answer": "The retrieved context does not cover Redis for caching.",
+    "Recall": 0,
+    "RetrievedSources": [
+      "README.md",
+      "README.md",
+      "CDC_Pipeline_Project.md",
+      "README.md",
+      "README.md",
+      "internal/config/config.go",
+      "README.md",
+      "CDC_Pipeline_Project.md",
+      "README.md",
+      "README.md"
+    ],
+    "MissingRequired": null,
+    "Violations": null,
+    "Citations": null,
+    "BadCitations": null,
+    "CitedCorrectly": false,
+    "Refused": true,
+    "JudgeCorrectness": 2,
+    "JudgeFaithful": true,
+    "JudgeReason": "The system's answer is correct and faithful to the retrieved context.",
+    "Judged": true
+  },
+  {
+    "Question": {
+      "ID": "q16",
+      "Question": "Does the HTTP API require authentication? What auth middleware is applied?",
+      "Category": "negative",
+      "Difficulty": "medium",
+      "GroundTruth": "There is none. NewRouter applies exactly three global middlewares, chi Recoverer, middleware.Logging and middleware.Metrics. No JWT, no API key, no bearer token. A real gap worth calling out, but the honest answer is that the endpoints are unauthenticated.\n",
+      "ExpectedSources": [
+        "internal/api/router.go",
+        "internal/api/middleware/logging.go",
+        "internal/api/middleware/metrics.go"
+      ],
+      "MustContain": [
+        "Recoverer|no authentication|not require authentication"
+      ],
+      "MustNotContain": [
+        "JWT",
+        "bearer",
+        "OAuth"
+      ],
+      "WhyItIsHard": "Proving absence requires seeing the complete middleware chain. Retrieving only logging.go tempts the model to assume auth exists elsewhere.\n"
+    },
+    "Answer": "The HTTP API does not require authentication. The auth middleware applied is `Logging`.",
+    "Recall": 0.6666666666666666,
+    "RetrievedSources": [
+      "internal/api/middleware/logging.go",
+      "internal/api/middleware/logging.go",
+      "internal/api/middleware/logging.go",
+      "internal/api/middleware/logging.go",
+      "internal/api/handler/health_handler.go",
+      "internal/api/middleware/logging.go",
+      "CDC_Pipeline_Project.md",
+      "internal/api/router.go",
+      "tests/integration/api_test.go",
+      "CDC_Pipeline_Project.md"
+    ],
+    "MissingRequired": null,
+    "Violations": null,
+    "Citations": null,
+    "BadCitations": null,
+    "CitedCorrectly": false,
+    "Refused": false,
+    "JudgeCorrectness": 2,
+    "JudgeFaithful": true,
+    "JudgeReason": "The system's answer correctly states that the HTTP API does not require authentication and identifies the `Logging` middleware as the one applied.",
+    "Judged": true
+  },
+  {
+    "Question": {
+      "ID": "q17",
+      "Question": "Does the consumer use manual partition assignment or a consumer group?",
+      "Category": "negative",
+      "Difficulty": "medium",
+      "GroundTruth": "A consumer group. kafka.NewReader is configured with GroupID (default cdc-pipeline-consumer), so segmentio/kafka-go handles group coordination and rebalancing, and Partition is never set manually. Note the lag monitor separately uses a kafka.Client admin connection, which is not a group member.\n",
+      "ExpectedSources": [
+        "internal/consumer/kafka_consumer.go",
+        "internal/consumer/lag_monitor.go"
+      ],
+      "MustContain": [
+        "GroupID|consumer group"
+      ],
+      "MustNotContain": [],
+      "WhyItIsHard": "Two Kafka connections exist for different purposes, and a shallow answer conflates the admin client with the group member.\n"
+    },
+    "Answer": "The consumer uses a consumer group. This is explicitly stated in the Consumer Config section of the `internal/consumer/kafka_consumer.go` file (lines 248-266).",
+    "Recall": 1,
+    "RetrievedSources": [
+      "CDC_Pipeline_Project.md",
+      "internal/consumer/lag_monitor.go",
+      "internal/consumer/lag_monitor.go",
+      "k8s/configmap.yaml",
+      "tests/integration/consumer_test.go",
+      "internal/consumer/kafka_consumer.go",
+      "alerts.yml",
+      "internal/consumer/lag_monitor_test.go",
+      "internal/consumer/lag_monitor.go",
+      "internal/consumer/debezium_handler.go"
+    ],
+    "MissingRequired": null,
+    "Violations": null,
+    "Citations": [
+      "internal/consumer/kafka_consumer.go"
+    ],
+    "BadCitations": null,
+    "CitedCorrectly": true,
+    "Refused": false,
+    "JudgeCorrectness": 2,
+    "JudgeFaithful": true,
+    "JudgeReason": "The system's answer correctly identifies that the consumer uses a consumer group and provides a specific reference to the relevant context.",
+    "Judged": true
+  },
+  {
+    "Question": {
+      "ID": "q18",
+      "Question": "What does the Debezium handler do when it receives an event with an empty op field?",
+      "Category": "reasoning",
+      "Difficulty": "hard",
+      "GroundTruth": "Empty op is treated as a tombstone / end-of-snapshot marker. If After is nil the event is logged at debug and skipped with a nil return, not an error, so no retry and no DLQ. If After is non-nil it falls through to handleCreate and is indexed like a normal create.\n",
+      "ExpectedSources": [
+        "internal/consumer/debezium_handler.go"
+      ],
+      "MustContain": [
+        "tombstone"
+      ],
+      "MustNotContain": [],
+      "WhyItIsHard": "A case arm in the middle of a switch. A fixed-size chunker will cut the switch in half and lose either the condition or the consequence.\n"
+    },
+    "Answer": "When the Debezium handler receives an event with an empty op field, it skips the event if there is no after payload. This is done to handle tombstone or end-of-snapshot markers, which are represented by an empty op field in Debezium events.",
+    "Recall": 1,
+    "RetrievedSources": [
+      "internal/consumer/debezium_handler.go",
+      "internal/consumer/debezium_handler.go",
+      "internal/consumer/debezium_handler.go",
+      "internal/consumer/debezium_handler.go",
+      "internal/consumer/debezium_handler.go",
+      "CDC_Pipeline_Project.md",
+      "internal/consumer/debezium_handler.go",
+      "CDC_Pipeline_Project.md",
+      "tests/unit/debezium_handler_test.go",
+      "internal/model/order.go"
+    ],
+    "MissingRequired": null,
+    "Violations": null,
+    "Citations": null,
+    "BadCitations": null,
+    "CitedCorrectly": false,
+    "Refused": false,
+    "JudgeCorrectness": 2,
+    "JudgeFaithful": true,
+    "JudgeReason": "The system's answer accurately captures the key points from the retrieved context about how the Debezium handler processes events with an empty op field.",
+    "Judged": true
+  },
+  {
+    "Question": {
+      "ID": "q19",
+      "Question": "How does the lag monitor handle a partition the consumer group has never committed to?",
+      "Category": "reasoning",
+      "Difficulty": "hard",
+      "GroundTruth": "OffsetFetch returns CommittedOffset = -1 for that case. fetchCommittedOffsets clamps any negative committed offset to 0, so the reported lag equals the full end offset of the partition. The doc comment on fetchCommittedOffsets states this intent explicitly.\n",
+      "ExpectedSources": [
+        "internal/consumer/lag_monitor.go"
+      ],
+      "MustContain": [
+        "-1"
+      ],
+      "MustNotContain": [],
+      "WhyItIsHard": "The answer is in a doc comment on an unexported helper deep in the file. Tests whether chunking preserved comment-to-function attachment.\n"
+    },
+    "Answer": "The lag monitor treats a committed offset of -1 as 0 for a partition.",
+    "Recall": 1,
+    "RetrievedSources": [
+      "internal/consumer/lag_monitor.go",
+      "internal/consumer/lag_monitor.go",
+      "internal/consumer/lag_monitor.go",
+      "internal/consumer/lag_monitor.go",
+      "internal/consumer/lag_monitor.go",
+      "internal/consumer/lag_monitor.go",
+      "internal/consumer/lag_monitor.go",
+      "internal/consumer/lag_monitor.go",
+      "internal/consumer/lag_monitor_test.go",
+      "internal/consumer/lag_monitor.go"
+    ],
+    "MissingRequired": null,
+    "Violations": null,
+    "Citations": null,
+    "BadCitations": null,
+    "CitedCorrectly": false,
+    "Refused": false,
+    "JudgeCorrectness": 2,
+    "JudgeFaithful": true,
+    "JudgeReason": "The system's answer accurately reflects the behavior described in the retrieved context.",
+    "Judged": true
+  },
+  {
+    "Question": {
+      "ID": "q20",
+      "Question": "Are database migrations applied automatically, and how are they embedded in the binary?",
+      "Category": "factual",
+      "Difficulty": "medium",
+      "GroundTruth": "Yes, automatically at startup. cmd/server/main.go calls database.RunMigrations before anything else starts. The SQL is compiled into the binary with go:embed migrations/*.sql into migrationsFS. RunMigrations reads the dir, filters .sql, sorts filenames alphabetically for ordering, and Execs each one. There is no migration version table, so every file re-runs on every boot, which is why 001_create_orders.sql is written idempotently with IF NOT EXISTS and CREATE OR REPLACE.\n",
+      "ExpectedSources": [
+        "internal/db/postgres.go",
+        "cmd/server/main.go",
+        "internal/db/migrations/001_create_orders.sql"
+      ],
+      "MustContain": [
+        "go:embed"
+      ],
+      "MustNotContain": [
+        "golang-migrate",
+        "goose",
+        "schema_migrations"
+      ],
+      "WhyItIsHard": "The best part of the answer, no version table hence the idempotent SQL, is an inference across three files that no single chunk states.\n"
+    },
+    "Answer": "Database migrations are applied automatically on app startup. They are embedded in the binary using the `go:embed` directive in `internal/db/postgres.go` (lines 18-19).",
+    "Recall": 0.6666666666666666,
+    "RetrievedSources": [
+      "internal/db/postgres.go",
+      "internal/db/postgres.go",
+      "CDC_Pipeline_Project.md",
+      "README.md",
+      "internal/db/migrations/001_create_orders.sql",
+      "internal/db/postgres.go",
+      "CDC_Pipeline_Project.md",
+      "internal/db/postgres.go",
+      "CDC_Pipeline_Project.md",
+      "internal/model/order.go"
+    ],
+    "MissingRequired": null,
+    "Violations": null,
+    "Citations": [
+      "internal/db/postgres.go"
+    ],
+    "BadCitations": null,
+    "CitedCorrectly": true,
+    "Refused": false,
+    "JudgeCorrectness": 2,
+    "JudgeFaithful": true,
+    "JudgeReason": "The system's answer correctly states that database migrations are applied automatically on app startup and that they are embedded in the binary using the `go:embed` directive in `internal/db/postgres.go` (lines 18-19).",
+    "Judged": true
+  }
+]

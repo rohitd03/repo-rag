@@ -1,178 +1,178 @@
 # Phase 3 — answer quality, measured
 
-Retrieval scoring (Phase 2) says whether the right sources were found.
-It cannot say whether the answer was any good. This phase scores the answers.
+Retrieval scoring (Phase 2) says whether the right sources were found. It
+cannot say whether the answer was any good. This phase scores the answers —
+and the first thing it found was that the harness itself was not yet
+trustworthy.
 
 Config: `hybrid+mmr`, k=10, generator `qwen2.5-coder:3b`, judge
-`qwen2.5-coder:7b`, both local. 20 questions, ~7 minutes.
+`qwen2.5-coder:7b`, both local. 20 questions, ~7 minutes per run.
 
 ---
 
-## Headline
+## First: the results were not reproducible, and that invalidated the first two runs
+
+Two runs of an identical configuration produced **15 different answers out of
+20**, and three questions flipped their judge score. Mean correctness moved
+from 1.45 to 1.70 — a larger swing than any change being measured.
+
+An earlier version of this document reported that 1.45 → 1.70 as evidence
+that a fix had helped. It was not. It was noise, and the claim was wrong.
+
+**Cause.** The generator ran at `temperature: 0.1` and Ollama seeds its
+sampler per request. Near-greedy is not greedy, and an unseeded sampler is
+not reproducible even at temperature 0, because ties still get broken at
+random.
+
+**Fix.** `temperature: 0` and a fixed seed on both the generator and the
+judge. Verified by running the identical config twice and diffing:
+
+```
+identical answers  20/20
+judge score flips  0
+```
+
+Everything below comes from the deterministic runs. The earlier ones are kept
+in `runs/` as the evidence for this section, not as results.
+
+**Why this is the most important finding in the phase:** Phase 4 exists to
+compare models. If run-to-run noise moves the headline metric by 0.25, a
+genuine 0.2 improvement from a better model is unmeasurable. The comparison
+would have produced confident numbers that meant nothing.
+
+---
+
+## Results
 
 | | |
 |---|---|
-| Judge mean correctness | 1.45 / 2.00 |
-| Scored 2 | 13/20 |
+| Judge mean correctness | 1.60 / 2.00 |
+| Judge scored 2 | 14/20 |
 | Judge-rated faithful | 16/20 |
-| **Hallucinations** | **1/20** |
-| **Fabricated citations** | **2** |
-| Answers containing any citation | 6/20 |
+| Hallucinations | 0/20 |
+| Fabricated citations | 0 |
+| Answers containing a citation | 5/20 |
+| Missing required phrases | 8 |
 | Negatives correctly refused | 1/1 |
 
 **What limited each answer:**
 
 ```
-ok                   13
+ok                   14
 retrieval-limited     4
 generation-limited    2
-hallucination         1
 ```
 
-That breakdown is the most useful output of the whole phase. Of the seven
-non-ok answers, four are the retriever's fault and three are the generator's.
-Effort should follow that ratio, and without attribution you would be
-guessing.
+That breakdown is the most actionable output of the phase. Of six imperfect
+answers, four are the retriever's fault and two the generator's. Effort
+should follow that ratio.
 
 ---
 
-## The judge is usable for triage and unreliable for precision
+## The judge is usable for triage and not for scoring
 
-This was checked before any judge number was quoted, and the check failed —
-so the 1.45 above is an **over-estimate** and should be read as such.
+Checked before quoting any judge number, and it failed twice. Both failures
+are cases where the **deterministic check was right and the judge was wrong**.
 
-**Proof: q03.** The golden set deliberately encodes an off-by-one.
-`processWithRetry` loops `attempt <= MaxRetries` with `MaxRetries = 3`, so a
-message gets **4 total attempts**. The `why_it_is_hard` field even says
-"models frequently answer 3 attempts, not 4."
+### q03 — misses a numeric detail that is the whole question
 
-The system answered:
+The golden set deliberately encodes an off-by-one: `processWithRetry` loops
+`attempt <= MaxRetries` with `MaxRetries = 3`, so a message gets **4 total
+attempts**. The `why_it_is_hard` field says so explicitly.
 
-> A failing message is retried up to 3 times with exponential backoff.
+The answer: *"retried up to 3 times."* The judge scored it **2** —
+"accurately states the number of retries."
 
-The judge scored it **2** — "accurately states the number of retries." It
-should be a 1. The judge read past a numeric detail that was the entire point
-of the question.
+### q11 — scores 2 on an answer missing two-thirds of the pipeline
 
-**Where the judge was right:** q11 (caught a fabricated component list), q12
-(caught a genuinely wrong metric description), q06 (correctly passed an answer
-that my own deterministic check wrongly failed).
+q11 asks to trace an order from HTTP POST to Elasticsearch. The answer names
+the handler, the repository and the Elasticsearch client. It never mentions
+**Postgres, Debezium or Kafka** — the entire CDC middle of the system that
+the project is named after.
 
-**Where its reasoning was incoherent:** q09 scored 0 with the explanation
-"the system's answer is correct because it accurately states that the
-retrieved context does not cover the question." The *score* is right and the
-*reason* contradicts it. A judge whose stated reasoning does not match its
-own verdict cannot be trusted to explain itself, only to sort.
+The judge scored it **2** and marked it **faithful**. The deterministic check
+caught it immediately: `missing: [Debezium, Kafka]`.
+
+### Where the layers disagree, so far the deterministic check has won
+
+```
+judge said 2 but a required phrase is absent:  q05, q11
+```
 
 **Conclusion.** Use the judge to rank runs against each other and to flag
-candidates for review. Do not quote its mean as an accuracy figure. The
-deterministic checks are the ones that hold.
-
----
-
-## q11 — what a hallucination actually looks like
-
-Phase 2 recorded q11 as recall 0.12 and left it there. Answer scoring shows
-what that number cost:
-
-> 1. **HTTP POST Request** … **Component**: `internal/http/orders_handler.go` (lines 100-120)
-> 2. **Order Creation** … **Component**: `internal/service/order_service.go` (lines 50-70)
-
-`internal/http/` **does not exist in the repository.** The real path is
-`internal/api/handler/order_handler.go`. The model invented a plausible
-directory, a plausible filename, *and* plausible line numbers.
-
-It also omitted Postgres, Debezium and Kafka entirely — the whole CDC middle
-of the pipeline — and described a direct handler → service → Elasticsearch
-path instead. Retrieval had returned only `order_repository.go` plus two
-markdown files, so the model filled the gap with what such a system usually
-looks like.
-
-This is the failure mode worth fearing: internally coherent, specific down to
-line numbers, and completely false. A reader who trusted it would go looking
-for a file that was never written.
-
-Both layers caught it independently — the deterministic fabricated-citation
-check and the judge. That agreement is the reason to keep both.
+candidates for a human look. Do not quote `1.60` as an accuracy figure — it
+is an over-estimate, and two of the 14 answers it scored 2 demonstrably are
+not.
 
 ---
 
 ## q09 — the refusal clause over-triggers
 
-Phase 1 concluded that the grounding prompt was doing the heavy lifting on
-refusals. That still holds, and this is the other side of it.
+Phase 1 concluded the grounding prompt was doing the heavy lifting on
+refusals. True, and here is the other side.
 
 q09 asks why a failed message's offset is still committed. Recall was
-**1.00** — `kafka_consumer.go` was retrieved and it contains both the
-`sendToDLQ` call and the commit-anyway branch. The answer:
+**1.00** — `kafka_consumer.go` was retrieved, containing both the `sendToDLQ`
+call and the commit-anyway branch. The answer:
 
 > The retrieved context does not cover why a message fails all retries and
 > its offset is still committed.
 
-A false refusal. The model had what it needed and declined anyway.
+A false refusal on a question it had everything to answer.
 
-So refusal behaviour has a precision/recall trade-off like anything else:
-the clause that stops q15 inventing a Redis cache also makes q09 give up on a
-question it could have answered. Phase 1's "the refusal clause works" was
-half the picture. Measuring only the negative questions would never have
-revealed this, because it only shows up on an answerable one.
+So refusal has a precision/recall trade-off like anything else: the clause
+that stops q15 inventing a Redis cache also makes q09 give up. Phase 1's
+"the refusal clause works" was half the picture, and testing only the
+negative questions would never have shown the other half.
 
 ---
 
-## Citations are rare and partly fake
+## Citations are rare
 
-Only **6 of 20** answers cite any file, despite the system prompt requiring a
-citation per claim. **2 of those citations were fabricated** (both in q11).
+**5 of 20** answers cite any file, despite the system prompt requiring a
+citation per claim.
 
-So citation compliance is bad in both directions: mostly absent, and when
-present, not automatically trustworthy. A citation rate reported on its own
-would look like a mild instruction-following gap; paired with the fabrication
-count it is a correctness problem.
+At temperature 0 there were **zero fabricated citations**. The earlier runs
+had 2 and then 4 — so the fabrication rate was itself sampling noise, which
+is its own argument for the determinism fix. Under greedy decoding this model
+either cites correctly or does not cite at all.
 
-This is a 3B model. Whether it is a capability limit or a prompt problem is
-exactly the Phase 4 question, and it is now measurable rather than arguable.
+Whether low citation compliance is a capability limit or a prompt problem is
+a Phase 4 question, and it is now measurable rather than arguable.
 
 ---
 
 ## A bug in my own checker
 
-The first run flagged q06 as missing the required phrase `sync.Once`. The
-answer said:
-
-> The `once.Do` function ensures that the `Metrics` instance is created only
-> once.
-
-Same fact, different words. The deterministic check was wrong and the judge
-was right.
+The first run flagged q06 for missing `sync.Once` when the answer said
+`once.Do` — the same fact in different words. The checker was wrong and the
+judge was right.
 
 `must_contain` entries now accept `a|b` alternatives, so the golden set can
-name the ways a fact may legitimately be phrased. It stays a substring test —
-deterministic, no model involved — rather than being softened into a
-judgement call.
+name legitimate phrasings while staying a deterministic substring test rather
+than being softened into a judgement call. Five entries updated.
 
-Five golden entries were updated. The original run's "12 missing phrases"
-overstated real failures; the corrected count is in `runs/02-after-fix.json`.
-
-Worth being explicit: **an eval can be wrong, and a failing check is not
-proof the system failed.** Checking the failures rather than accepting them
-is what caught this one.
+**An eval can be wrong, and a failing check is not proof the system failed.**
+Investigating the failures rather than accepting them is what caught this.
 
 ---
 
-## What this changes for Phase 4
+## What Phase 4 must measure
 
-Phase 4 compares models. Phase 3 says what to compare them on, and the
-answers are not the obvious ones:
+Phase 3 says what to compare models on, and the answers are not the obvious
+ones:
 
-- **Not mean correctness.** The judge is too lenient to rank close results.
-- **Fabricated citations and hallucinations.** Deterministic, and they are
-  what actually makes an answer dangerous.
+- **Not mean correctness.** The judge is too lenient to rank close results,
+  and q03 and q11 prove it.
+- **Missing required phrases.** Deterministic, and it caught what the judge
+  missed on both failures.
+- **Hallucinations and fabricated citations.** Deterministic, and they are
+  what makes an answer dangerous rather than merely incomplete.
 - **False-refusal rate on answerable questions.** q09 shows this is a real
-  axis and it is invisible if you only test the negative questions.
-- **Attribution mix.** A bigger model should move `generation-limited` and
-  `hallucination` toward zero while leaving `retrieval-limited` untouched.
-  If a model change moves the retrieval-limited count, something is wrong
-  with the experiment.
+  axis, invisible if you only test negatives.
+- **Attribution mix.** A better generator should push `generation-limited`
+  toward zero while leaving `retrieval-limited` untouched. If a model swap
+  moves the retrieval-limited count, the experiment is broken.
 
-The 7B generator and the Claude backend are both already wired, so the
-comparison is a configuration change rather than new code.
+And a precondition, now satisfied: **every configuration must be reproducible
+before any two are compared.**

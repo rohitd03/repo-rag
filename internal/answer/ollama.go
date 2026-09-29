@@ -12,6 +12,11 @@ import (
 	"github.com/rohitd03/repo-rag/internal/store"
 )
 
+// evalSeed fixes the sampler so repeated runs are comparable. Any constant
+// works; what matters is that it does not change between runs being
+// compared.
+const evalSeed = 42
+
 // Ollama is a Generator backed by a local model served by Ollama.
 //
 // Free and private, with two costs worth measuring rather than assuming:
@@ -51,10 +56,17 @@ type chatRequest struct {
 }
 
 type chatOptions struct {
-	// Near-greedy decoding. This is a grounded extraction task, not a
-	// creative one - the answer should be reproducible across runs, or the
-	// eval measures sampling noise as much as it measures the model.
+	// Greedy decoding. This is a grounded extraction task, not a creative
+	// one, and the eval depends on reproducibility.
+	//
+	// This was 0.1 until two identical eval runs produced 15 different
+	// answers out of 20 and moved mean correctness by 0.25 - more than any
+	// change being measured. "Near-greedy" is not greedy.
 	Temperature float64 `json:"temperature"`
+
+	// Fixed seed. Temperature 0 alone still leaves ties broken at random,
+	// and the sampler is seeded per request.
+	Seed int `json:"seed"`
 
 	// The context window the model is loaded with. Five chunks of ~83 lines
 	// plus the system prompt runs well past the 2048 default, and Ollama
@@ -81,7 +93,7 @@ func (o *Ollama) Generate(ctx context.Context, question string, hits []store.Hit
 			{Role: "user", Content: buildPrompt(question, hits)},
 		},
 		Stream:  false,
-		Options: chatOptions{Temperature: 0.1, NumCtx: 8192},
+		Options: chatOptions{Temperature: 0, Seed: evalSeed, NumCtx: 8192},
 	})
 	if err != nil {
 		return "", fmt.Errorf("answer: marshal request: %w", err)

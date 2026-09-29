@@ -101,8 +101,13 @@ type chatRequest struct {
 
 type chatOptions struct {
 	Temperature float64 `json:"temperature"`
+	Seed        int     `json:"seed"`
 	NumCtx      int     `json:"num_ctx"`
 }
+
+// evalSeed matches the generator's. Temperature 0 alone does not make a
+// local model reproducible - ties are still broken by a per-request seed.
+const evalSeed = 42
 
 type chatResponse struct {
 	Message chatMessage `json:"message"`
@@ -125,7 +130,7 @@ func (o *Ollama) Grade(ctx context.Context, question, groundTruth, retrievedCont
 		Format: "json",
 		// Temperature 0: a judge that changes its mind between runs makes
 		// every before/after comparison meaningless.
-		Options: chatOptions{Temperature: 0, NumCtx: 16384},
+		Options: chatOptions{Temperature: 0, Seed: evalSeed, NumCtx: 16384},
 	})
 	if err != nil {
 		return Verdict{}, fmt.Errorf("judge: marshal: %w", err)
