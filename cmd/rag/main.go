@@ -30,13 +30,20 @@ const (
 
 	// Local by default: no API key, no spend, and it works out of the box
 	// once Ollama is running. Set RAG_GEN_BACKEND=claude to compare.
-	defaultGenBackend     = "ollama"
-	defaultOllamaGenModel = "qwen2.5-coder:7b"
+	defaultGenBackend = "ollama"
+	// 3b, not 7b: it fits entirely in the RTX 4050's 4GB of VRAM, where the
+	// 7b partially offloads to CPU. It is also what every measurement so
+	// far used, and it leaves the 7b free to act as an independent judge.
+	defaultOllamaGenModel = "qwen2.5-coder:3b"
 	defaultClaudeModel    = "claude-opus-5"
 
 	// Ollama handles batches fine and this cuts HTTP round-trips
 	// substantially versus embedding one chunk at a time.
 	embedBatchSize = 32
+
+	// The judge should not be the model that wrote the answers. A model
+	// grading its own output recognises its own phrasing as correct.
+	defaultJudgeModel = "qwen2.5-coder:7b"
 
 	defaultMode       = string(retrieve.ModeHybridMMR)
 	defaultCandidates = 30
@@ -62,6 +69,8 @@ func main() {
 		err = runStats(ctx, os.Args[2:])
 	case "eval":
 		err = runEval(ctx, os.Args[2:])
+	case "answer-eval":
+		err = runAnswerEval(ctx, os.Args[2:])
 	default:
 		usage()
 		os.Exit(2)
@@ -81,12 +90,15 @@ func usage() {
   rag stats -corpus NAME               what is currently indexed
   rag eval  -corpus NAME [-k N] [-mode M|-sweep] [-v]
                                        score retrieval against the golden set
+  rag answer-eval -corpus NAME [-no-judge] [-only IDS]
+                                       score generated answers end to end
 
 environment:
   RAG_DATABASE_URL   default `+defaultDSN+`
   RAG_OLLAMA_URL     default `+defaultOllamaURL+`
   RAG_EMBED_MODEL    default `+defaultEmbedModel+`
   RAG_GEN_BACKEND    ollama (default) | claude
+  RAG_JUDGE_MODEL    default `+defaultJudgeModel+`
   RAG_GEN_MODEL      default `+defaultOllamaGenModel+` (ollama) / `+defaultClaudeModel+` (claude)
   ANTHROPIC_API_KEY  required only when RAG_GEN_BACKEND=claude
 `)
