@@ -115,8 +115,13 @@ type chatRequest struct {
 	Model    string        `json:"model"`
 	Messages []chatMessage `json:"messages"`
 	Stream   bool          `json:"stream"`
-	Format   string        `json:"format,omitempty"`
-	Options  chatOptions   `json:"options"`
+	// Hold the model in VRAM between requests. Without it, a 4GB GPU
+	// alternating between a 3B generator and a 7B judge evicts and reloads
+	// on every call, and eventually Ollama fails with "timed out waiting
+	// for llama-server to start".
+	KeepAlive string      `json:"keep_alive,omitempty"`
+	Format    string      `json:"format,omitempty"`
+	Options   chatOptions `json:"options"`
 }
 
 type chatOptions struct {
@@ -149,7 +154,8 @@ func (o *Ollama) chat(ctx context.Context, system, user string) (Verdict, error)
 			{Role: "system", Content: system},
 			{Role: "user", Content: user},
 		},
-		Stream: false,
+		Stream:    false,
+		KeepAlive: "15m",
 		// Ollama constrains decoding to valid JSON. Cheaper and more
 		// reliable than asking politely and parsing whatever comes back.
 		Format: "json",

@@ -52,7 +52,12 @@ type chatRequest struct {
 	Model    string        `json:"model"`
 	Messages []chatMessage `json:"messages"`
 	Stream   bool          `json:"stream"`
-	Options  chatOptions   `json:"options"`
+	// Hold the model in VRAM between requests. Without it, a 4GB GPU
+	// alternating between a 3B generator and a 7B judge evicts and reloads
+	// on every call, and eventually Ollama fails with "timed out waiting
+	// for llama-server to start".
+	KeepAlive string      `json:"keep_alive,omitempty"`
+	Options   chatOptions `json:"options"`
 }
 
 type chatOptions struct {
@@ -93,8 +98,9 @@ func (o *Ollama) Generate(ctx context.Context, question string, hits []store.Hit
 			{Role: "system", Content: systemPrompt},
 			{Role: "user", Content: buildPrompt(question, hits)},
 		},
-		Stream:  false,
-		Options: chatOptions{Temperature: 0, Seed: evalSeed, NumCtx: 8192},
+		Stream:    false,
+		KeepAlive: "15m",
+		Options:   chatOptions{Temperature: 0, Seed: evalSeed, NumCtx: 8192},
 	})
 	if err != nil {
 		return "", fmt.Errorf("answer: marshal request: %w", err)

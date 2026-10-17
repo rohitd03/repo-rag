@@ -25,7 +25,16 @@ type armResult struct {
 	Results      []eval.AnswerResult `json:"results"`
 	Summary      eval.AnswerSummary  `json:"summary"`
 	MeanCtxBytes int                 `json:"mean_context_bytes"`
-	Elapsed      time.Duration       `json:"elapsed"`
+	GenElapsed   time.Duration       `json:"gen_elapsed"`
+}
+
+// pending is one generated answer waiting to be judged.
+type pending struct {
+	armIdx   int
+	resIdx   int
+	question eval.Question
+	ctxText  string
+	answer   string
 }
 
 // runBench compares the real system against its controls.
@@ -34,6 +43,12 @@ type armResult struct {
 // only thing that varies is how the context was chosen. Without the controls,
 // "recall went up" is a claim about a number rather than about whether the
 // retrieval does anything useful.
+//
+// Generation and judging run as two separate passes, not interleaved per
+// question. On a 4GB GPU an interleaved loop evicts and reloads a model on
+// every call - roughly 200 loads for a five-arm run - and Ollama eventually
+// dies with "timed out waiting for llama-server to start". Batching by stage
+// loads each model once.
 func runBench(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("bench", flag.ExitOnError)
 	corpus := fs.String("corpus", "", "corpus name (required)")
@@ -45,6 +60,7 @@ func runBench(ctx context.Context, args []string) error {
 	genModels := fs.String("gen-models", "qwen2.5-coder:3b", "comma-separated generator models for the RAG arms")
 	budget := fs.Int("truncate-bytes", 90000, "context budget for the truncated-corpus arm, in bytes")
 	only := fs.String("only", "", "comma-separated arm names, for a partial run")
+	noJudge := fs.Bool("no-judge", false, "skip judging, report deterministic metrics only")
 	out := fs.String("out", "", "write full results to this JSON file")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -66,38 +82,40 @@ func runBench(ctx context.Context, args []string) error {
 	defer st.Close()
 
 	emb := newEmbedder()
-	j := judge.NewOllama(env("RAG_OLLAMA_URL", defaultOllamaURL), env("RAG_JUDGE_MODEL", defaultJudgeModel))
+	ollamaURL := env("RAG_OLLAMA_URL", defaultOllamaURL)
 
-	// Build the arms. Controls first, so a run interrupted partway still
-	// has the baselines it needs for the comparison to mean anything.
 	type armSpec struct {
 		arm      bench.Arm
 		genModel string
 	}
 	var specs []armSpec
 
-	genModel := strings.Split(*genModels, ",")[0]
+	models := []string{}
+	for _, gm := range strings.Split(*genModels, ",") {
+		if gm = strings.TrimSpace(gm); gm != "" {
+			models = append(models, gm)
+		}
+	}
+	if len(models) == 0 {
+		return fmt.Errorf("bench: -gen-models is empty")
+	}
+
+	// Controls run on the first generator so the comparison against it is
+	// model-for-model.
+	control := models[0]
 	specs = append(specs,
-		armSpec{bench.NoContext{}, genModel},
-		armSpec{&bench.RandomK{Store: st, Corpus: *corpus, Model: emb.Model(), Seed: 42}, genModel},
+		armSpec{bench.NoContext{}, control},
+		armSpec{&bench.RandomK{Store: st, Corpus: *corpus, Model: emb.Model(), Seed: 42}, control},
 		armSpec{&bench.TruncatedCorpus{
 			Store: st, Corpus: *corpus, Model: emb.Model(), BudgetBytes: *budget,
-		}, genModel},
+		}, control},
 	)
-
-	for _, gm := range strings.Split(*genModels, ",") {
-		gm = strings.TrimSpace(gm)
-		if gm == "" {
-			continue
-		}
+	for _, gm := range models {
 		r, err := newRetriever(st, *corpus, *mode, *candidates, *lambda)
 		if err != nil {
 			return err
 		}
-		specs = append(specs, armSpec{
-			&bench.RAG{Retriever: r, Label: "rag/" + shortModel(gm)},
-			gm,
-		})
+		specs = append(specs, armSpec{&bench.RAG{Retriever: r, Label: "rag/" + shortModel(gm)}, gm})
 	}
 
 	filter := map[string]bool{}
@@ -107,83 +125,129 @@ func runBench(ctx context.Context, args []string) error {
 		}
 	}
 
-	var armResults []armResult
+	// ---- pass 1: generate, grouped by generator model so each loads once
 
-	for _, spec := range specs {
-		if len(filter) > 0 && !filter[spec.arm.Name()] {
+	arms := make([]armResult, 0, len(specs))
+	var queue []pending
+
+	byModel := map[string][]int{}
+	for _, s := range specs {
+		if len(filter) > 0 && !filter[s.arm.Name()] {
 			continue
 		}
+		arms = append(arms, armResult{
+			Arm:      s.arm.Name(),
+			Describe: s.arm.Describe(),
+			GenModel: s.genModel,
+		})
+		byModel[s.genModel] = append(byModel[s.genModel], len(arms)-1)
+	}
+	if len(arms) == 0 {
+		return fmt.Errorf("bench: -only matched no arms")
+	}
 
-		gen := answer.NewOllama(env("RAG_OLLAMA_URL", defaultOllamaURL), spec.genModel)
+	armSpecOf := map[int]bench.Arm{}
+	{
+		ai := 0
+		for _, s := range specs {
+			if len(filter) > 0 && !filter[s.arm.Name()] {
+				continue
+			}
+			armSpecOf[ai] = s.arm
+			ai++
+		}
+	}
 
-		start := time.Now()
-		var (
-			results  []eval.AnswerResult
-			ctxBytes int
-		)
+	for model, armIdxs := range byModel {
+		gen := answer.NewOllama(ollamaURL, model)
+		for _, ai := range armIdxs {
+			arm := armSpecOf[ai]
+			start := time.Now()
+			ctxBytes := 0
 
-		for _, q := range g.Questions {
-			hits, err := spec.arm.Context(ctx, q.Question, *k)
-			if err != nil {
-				return fmt.Errorf("bench: %s: context for %s: %w", spec.arm.Name(), q.ID, err)
+			for _, q := range g.Questions {
+				hits, err := arm.Context(ctx, q.Question, *k)
+				if err != nil {
+					return fmt.Errorf("bench: %s: context for %s: %w", arm.Name(), q.ID, err)
+				}
+
+				paths := make([]string, len(hits))
+				var ctxText strings.Builder
+				for i, h := range hits {
+					paths[i] = h.SourcePath
+					fmt.Fprintf(&ctxText, "[%d] %s\n%s\n\n", i+1, h.Label(), h.Content)
+				}
+				ctxBytes += ctxText.Len()
+
+				text, err := gen.Generate(ctx, q.Question, hits)
+				if err != nil {
+					return fmt.Errorf("bench: %s: generate %s: %w", arm.Name(), q.ID, err)
+				}
+
+				retrieval := eval.Score(q, paths, 0)
+				arms[ai].Results = append(arms[ai].Results, eval.ScoreAnswer(q, text, retrieval.Recall, paths))
+
+				queue = append(queue, pending{
+					armIdx:   ai,
+					resIdx:   len(arms[ai].Results) - 1,
+					question: q,
+					ctxText:  ctxText.String(),
+					answer:   text,
+				})
+
+				fmt.Fprintf(os.Stderr, "\r  generate %-18s %s (%d/%d)   ",
+					arm.Name(), q.ID, len(arms[ai].Results), len(g.Questions))
 			}
 
-			paths := make([]string, len(hits))
-			var contextText strings.Builder
-			for i, h := range hits {
-				paths[i] = h.SourcePath
-				fmt.Fprintf(&contextText, "[%d] %s\n%s\n\n", i+1, h.Label(), h.Content)
-			}
-			ctxBytes += contextText.Len()
+			arms[ai].GenElapsed = time.Since(start)
+			arms[ai].MeanCtxBytes = ctxBytes / len(g.Questions)
+		}
+	}
+	fmt.Fprintln(os.Stderr)
 
-			text, err := gen.Generate(ctx, q.Question, hits)
-			if err != nil {
-				return fmt.Errorf("bench: %s: generate %s: %w", spec.arm.Name(), q.ID, err)
-			}
+	// ---- pass 2: judge everything, one model load
 
-			retrieval := eval.Score(q, paths, 0)
-			res := eval.ScoreAnswer(q, text, retrieval.Recall, paths)
+	if !*noJudge {
+		j := judge.NewOllama(ollamaURL, env("RAG_JUDGE_MODEL", defaultJudgeModel))
+		for n, p := range queue {
+			res := &arms[p.armIdx].Results[p.resIdx]
 
-			// Correctness is graded blind - the judge never sees which arm
-			// produced the answer. Faithfulness needs the context, so it is
-			// a separate call.
-			if v, err := j.GradeBlind(ctx, q.Question, q.GroundTruth, text); err != nil {
-				fmt.Fprintf(os.Stderr, "\nwarn: blind judge failed on %s/%s: %v\n", spec.arm.Name(), q.ID, err)
+			if v, err := j.GradeBlind(ctx, p.question.Question, p.question.GroundTruth, p.answer); err != nil {
+				fmt.Fprintf(os.Stderr, "\nwarn: blind judge failed on %s/%s: %v\n",
+					arms[p.armIdx].Arm, p.question.ID, err)
 			} else {
 				res.Judged = true
 				res.JudgeCorrectness = v.Correctness
 				res.JudgeReason = v.Reason
 			}
 
-			if len(hits) > 0 {
-				if v, err := j.GradeFaithfulness(ctx, q.Question, contextText.String(), text); err != nil {
-					fmt.Fprintf(os.Stderr, "\nwarn: faithfulness judge failed on %s/%s: %v\n", spec.arm.Name(), q.ID, err)
+			if strings.TrimSpace(p.ctxText) != "" {
+				if v, err := j.GradeFaithfulness(ctx, p.question.Question, p.ctxText, p.answer); err != nil {
+					fmt.Fprintf(os.Stderr, "\nwarn: faithfulness judge failed on %s/%s: %v\n",
+						arms[p.armIdx].Arm, p.question.ID, err)
 				} else {
 					res.JudgeFaithful = v.Faithful
 				}
 			}
 
-			results = append(results, res)
-			fmt.Fprintf(os.Stderr, "\r  %-18s %s (%d/%d)   ",
-				spec.arm.Name(), q.ID, len(results), len(g.Questions))
+			fmt.Fprintf(os.Stderr, "\r  judge %-18s %s (%d/%d)   ",
+				arms[p.armIdx].Arm, p.question.ID, n+1, len(queue))
 		}
-
-		armResults = append(armResults, armResult{
-			Arm:          spec.arm.Name(),
-			Describe:     spec.arm.Describe(),
-			GenModel:     spec.genModel,
-			Results:      results,
-			Summary:      eval.SummarizeAnswers(results),
-			MeanCtxBytes: ctxBytes / len(g.Questions),
-			Elapsed:      time.Since(start),
-		})
+		fmt.Fprintln(os.Stderr)
 	}
-	fmt.Fprintln(os.Stderr)
 
-	printBench(armResults, g, j.Model())
+	for i := range arms {
+		arms[i].Summary = eval.SummarizeAnswers(arms[i].Results)
+	}
+
+	judgeModel := "none"
+	if !*noJudge {
+		judgeModel = env("RAG_JUDGE_MODEL", defaultJudgeModel)
+	}
+	printBench(arms, g, judgeModel)
 
 	if *out != "" {
-		blob, err := json.MarshalIndent(armResults, "", "  ")
+		blob, err := json.MarshalIndent(arms, "", "  ")
 		if err != nil {
 			return err
 		}
@@ -207,14 +271,17 @@ func printBench(arms []armResult, g *eval.Golden, judgeModel string) {
 	fmt.Printf("questions    %d\n\n", len(g.Questions))
 
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintf(w, "ARM\tGEN\tCORRECT\tSCORED-2\tMISSING\tHALLUC\tFAKE-CITE\tREFUSED\tCTX-BYTES\tELAPSED\n")
+	fmt.Fprintf(w, "ARM\tGEN\tCORRECT\tSCORED-2\tMISSING\tHALLUC\tFAKE-CITE\tUNFAITHFUL\tCTX-BYTES\tGEN-TIME\n")
 	for _, a := range arms {
 		s := a.Summary
-		fmt.Fprintf(w, "%s\t%s\t%.2f\t%d/%d\t%d\t%d\t%d\t%d\t%d\t%s\n",
+		unfaithful := "-"
+		if s.Judged > 0 {
+			unfaithful = fmt.Sprintf("%d", s.Judged-s.Faithful)
+		}
+		fmt.Fprintf(w, "%s\t%s\t%.2f\t%d/%d\t%d\t%d\t%d\t%s\t%d\t%s\n",
 			a.Arm, shortModel(a.GenModel), s.MeanCorrectness, s.Perfect, s.Judged,
-			s.MissingRequired, s.Hallucinations, s.BadCitations,
-			s.ByAttribution["generation-limited"]+s.NegativesRefused,
-			a.MeanCtxBytes, a.Elapsed.Round(time.Second))
+			s.MissingRequired, s.Hallucinations, s.BadCitations, unfaithful,
+			a.MeanCtxBytes, a.GenElapsed.Round(time.Second))
 	}
 	w.Flush()
 
@@ -229,22 +296,20 @@ func printBench(arms []armResult, g *eval.Golden, judgeModel string) {
 	for _, a := range arms {
 		byName[a.Arm] = a
 	}
-	fmt.Printf("\nkey comparisons\n")
+	fmt.Printf("\nkey comparisons (correctness delta, missing-phrase delta)\n")
 	for _, a := range arms {
 		if !strings.HasPrefix(a.Arm, "rag/") {
 			continue
 		}
 		for _, ctrl := range []string{"random-k", "truncated-corpus", "no-context"} {
-			if c, ok := byName[ctrl]; ok {
-				d := a.Summary.MeanCorrectness - c.Summary.MeanCorrectness
-				sign := "+"
-				if d < 0 {
-					sign = ""
-				}
-				fmt.Printf("  %-14s vs %-18s %s%.2f correctness, %+d missing phrases\n",
-					a.Arm, ctrl, sign, d,
-					a.Summary.MissingRequired-c.Summary.MissingRequired)
+			c, ok := byName[ctrl]
+			if !ok {
+				continue
 			}
+			fmt.Printf("  %-14s vs %-18s %+.2f correctness, %+d missing phrases\n",
+				a.Arm, ctrl,
+				a.Summary.MeanCorrectness-c.Summary.MeanCorrectness,
+				a.Summary.MissingRequired-c.Summary.MissingRequired)
 		}
 	}
 }
