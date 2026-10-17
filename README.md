@@ -8,8 +8,11 @@ scored against a hand-written golden question set, and the choice of embedding
 model, generation model and retrieval strategy is justified with numbers rather
 than vibes.
 
-First target corpus: [`cdc-pipeline`](../cdc-pipeline) — a Postgres → Debezium →
-Kafka → Elasticsearch CDC pipeline.
+First target corpus: `cdc-pipeline` — a Postgres → Debezium → Kafka →
+Elasticsearch CDC pipeline.
+
+New to the terminology? [GLOSSARY.md](GLOSSARY.md) defines every term used in
+the findings, in plain language.
 
 ---
 
@@ -28,10 +31,15 @@ This repo does both first, then builds the pipeline.
 
 ## Status
 
+**Phases 0-3 are built and measured. Phase 4 is not started.** The Phase 0
+baseline protocol is written but deliberately not yet scored - it is the
+control group, and it has to be scored independently of the retrieval work it
+exists to judge.
+
 | Phase | What it delivers | State |
 |---|---|:---:|
-| **0** | Golden question set + no-RAG baseline | ✅ built, awaiting scoring |
-| **1** | Naive RAG end to end — fixed chunks, one model, top-k | ✅ built, awaiting run |
+| **0** | Golden question set + no-RAG baseline | ⚠️ written, not yet scored |
+| **1** | Naive RAG end to end — fixed chunks, one model, top-k | ✅ recall 0.629, chunks averaged 83 lines |
 | **2** | Retrieval quality — AST chunking, hybrid search, MMR | ✅ recall 0.629 → 0.726 |
 | **3** | Answer-quality harness — judge, citations, failure attribution | ✅ 14 ok / 4 retrieval / 2 generation, runs now reproducible |
 | 4 | Model/approach ROI comparison + written decision | ⬜ next |
