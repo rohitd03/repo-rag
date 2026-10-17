@@ -82,9 +82,10 @@ type chatResponse struct {
 
 // Generate asks the local model to answer strictly from hits.
 func (o *Ollama) Generate(ctx context.Context, question string, hits []store.Hit) (string, error) {
-	if len(hits) == 0 {
-		return noContext, nil
-	}
+	// No short-circuit on empty hits. The benchmark's no-context arm needs
+	// the model to actually attempt the question with nothing retrieved, so
+	// that what it answers from its own priors is measurable. Callers that
+	// want the friendly "nothing indexed" message check for themselves.
 
 	body, err := json.Marshal(chatRequest{
 		Model: o.ModelID,

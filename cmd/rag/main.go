@@ -71,6 +71,8 @@ func main() {
 		err = runEval(ctx, os.Args[2:])
 	case "answer-eval":
 		err = runAnswerEval(ctx, os.Args[2:])
+	case "bench":
+		err = runBench(ctx, os.Args[2:])
 	default:
 		usage()
 		os.Exit(2)
@@ -92,6 +94,9 @@ func usage() {
                                        score retrieval against the golden set
   rag answer-eval -corpus NAME [-no-judge] [-only IDS]
                                        score generated answers end to end
+  rag bench -corpus NAME [-gen-models A,B]
+                                       compare RAG against no-context,
+                                       random-k and truncated-corpus controls
 
 environment:
   RAG_DATABASE_URL   default `+defaultDSN+`

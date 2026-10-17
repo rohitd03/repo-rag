@@ -353,3 +353,21 @@ func (s *Store) EmbeddingsFor(ctx context.Context, corpus, model string, hits []
 	}
 	return out, nil
 }
+
+// AllChunks returns every chunk for a corpus in file order, with its byte
+// length. Used by the truncated-corpus benchmark arm, which fills a context
+// window in repository order rather than by relevance.
+func (s *Store) AllChunks(ctx context.Context, corpus, model string) ([]Hit, error) {
+	rows, err := s.pool.Query(ctx,
+		`SELECT source_path, start_line, end_line, content,
+		        package, kind, symbol, 0::float8 AS score
+		   FROM chunks
+		  WHERE corpus = $1 AND embed_model = $2
+		  ORDER BY source_path, chunk_index`,
+		corpus, model)
+	if err != nil {
+		return nil, fmt.Errorf("store: all chunks: %w", err)
+	}
+	defer rows.Close()
+	return scanHits(rows)
+}

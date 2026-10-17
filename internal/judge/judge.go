@@ -35,7 +35,27 @@ type Verdict struct {
 
 // Judge grades an answer.
 type Judge interface {
+	// Grade scores correctness and faithfulness together. Convenient for a
+	// single-configuration run; not used by the benchmark, see below.
 	Grade(ctx context.Context, question, groundTruth, retrievedContext, answer string) (Verdict, error)
+
+	// GradeBlind scores correctness only, against ground truth, with the
+	// retrieved context deliberately withheld.
+	//
+	// This is what the benchmark uses for its headline metric. Showing the
+	// judge the context leaks which arm produced the answer - an answer
+	// built from 60 chunks of repository, or from none at all, is
+	// identifiable at a glance - and a judge that can tell the arms apart
+	// is not blind. Correctness is defined against ground truth, so the
+	// context is not needed to decide it.
+	GradeBlind(ctx context.Context, question, groundTruth, answer string) (Verdict, error)
+
+	// GradeFaithfulness checks whether every claim is supported by the
+	// context. This one needs the context by definition, so it cannot be
+	// blind - which is why it is kept separate from correctness rather
+	// than decided in the same call.
+	GradeFaithfulness(ctx context.Context, question, retrievedContext, answer string) (Verdict, error)
+
 	Model() string
 }
 
@@ -114,23 +134,28 @@ type chatResponse struct {
 	Error   string      `json:"error,omitempty"`
 }
 
-// Grade asks the judge for a verdict.
+// Grade scores correctness and faithfulness in one call.
 func (o *Ollama) Grade(ctx context.Context, question, groundTruth, retrievedContext, answer string) (Verdict, error) {
-	prompt := buildPrompt(question, groundTruth, retrievedContext, answer)
+	return o.chat(ctx, systemPrompt, buildPrompt(question, groundTruth, retrievedContext, answer))
+}
 
+// chat is the one HTTP path all three grading methods share, so they cannot
+// drift apart on decoding settings - which would make their scores
+// incomparable.
+func (o *Ollama) chat(ctx context.Context, system, user string) (Verdict, error) {
 	body, err := json.Marshal(chatRequest{
 		Model: o.ModelID,
 		Messages: []chatMessage{
-			{Role: "system", Content: systemPrompt},
-			{Role: "user", Content: prompt},
+			{Role: "system", Content: system},
+			{Role: "user", Content: user},
 		},
 		Stream: false,
 		// Ollama constrains decoding to valid JSON. Cheaper and more
 		// reliable than asking politely and parsing whatever comes back.
 		Format: "json",
-		// Temperature 0: a judge that changes its mind between runs makes
-		// every before/after comparison meaningless.
-		Options: chatOptions{Temperature: 0, Seed: evalSeed, NumCtx: 16384},
+		// Temperature 0 with a fixed seed: a judge that changes its mind
+		// between runs makes every comparison meaningless.
+		Options: chatOptions{Temperature: 0, Seed: evalSeed, NumCtx: 32768},
 	})
 	if err != nil {
 		return Verdict{}, fmt.Errorf("judge: marshal: %w", err)
@@ -201,4 +226,63 @@ func buildPrompt(question, groundTruth, retrievedContext, answer string) string 
 	sb.WriteString(answer)
 	sb.WriteString("\n</system_answer>\n")
 	return sb.String()
+}
+
+const blindSystemPrompt = `You grade answers produced by a code question-answering system. Reply with JSON only.
+
+You are given a question, the correct answer, and the system's answer. You are NOT given the context the system worked from, by design - judge only whether the answer is right.
+
+Return exactly this shape:
+{"correctness": 0|1|2, "faithful": true, "reason": "one sentence"}
+
+correctness, judged against the CORRECT ANSWER:
+  2 - matches the correct answer on every substantive point
+  1 - directionally right but missing a substantive point, or hedged into uselessness
+  0 - wrong, contradicts the correct answer, or declines to answer a question the correct answer does answer
+
+Be strict about specifics. If the correct answer states a number, a name or a
+mechanism, an answer that omits it or gets it wrong is not a 2. An answer that
+says the information was unavailable scores 0 when the correct answer provides
+it - declining is not partial credit.
+
+Always set "faithful" to true; it is judged separately and ignored here.
+Output JSON only, no prose before or after.`
+
+// GradeBlind scores correctness without showing the judge the context.
+func (o *Ollama) GradeBlind(ctx context.Context, question, groundTruth, answer string) (Verdict, error) {
+	prompt := fmt.Sprintf(
+		"<question>\n%s\n</question>\n\n"+
+			"<correct_answer>\n%s\n</correct_answer>\n\n"+
+			"<system_answer>\n%s\n</system_answer>\n",
+		question, groundTruth, answer)
+
+	return o.chat(ctx, blindSystemPrompt, prompt)
+}
+
+const faithfulnessSystemPrompt = `You check whether an answer is grounded in the context it was given. Reply with JSON only.
+
+Return exactly this shape:
+{"correctness": 0, "faithful": true|false, "reason": "one sentence"}
+
+faithful, judged against the CONTEXT only:
+  true  - every claim in the answer is supported by the context
+  false - the answer asserts something the context does not support, including
+          naming a file, function or component that does not appear in it
+
+An answer that correctly reports the context does not cover the question is
+faithful. Whether that was the right response is judged elsewhere, so do not
+consider it here.
+
+Always set "correctness" to 0; it is judged separately and ignored here.
+Output JSON only, no prose before or after.`
+
+// GradeFaithfulness checks grounding. Needs the context, so it is not blind.
+func (o *Ollama) GradeFaithfulness(ctx context.Context, question, retrievedContext, answer string) (Verdict, error) {
+	prompt := fmt.Sprintf(
+		"<question>\n%s\n</question>\n\n"+
+			"<context>\n%s\n</context>\n\n"+
+			"<answer>\n%s\n</answer>\n",
+		question, retrievedContext, answer)
+
+	return o.chat(ctx, faithfulnessSystemPrompt, prompt)
 }
