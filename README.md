@@ -31,10 +31,10 @@ This repo does both first, then builds the pipeline.
 
 ## Status
 
-**Phases 0-3 are built and measured. Phase 4 is not started.** The Phase 0
-baseline protocol is written but deliberately not yet scored - it is the
-control group, and it has to be scored independently of the retrieval work it
-exists to judge.
+**Phases 0-4 are built and measured.** The hand-scored Phase 0 baseline was
+replaced by three automated control arms - no-context, random-k and
+truncated-corpus - which are reproducible where hand-scoring is not. The
+decisions those measurements support are in [decisions.md](decisions.md).
 
 | Phase | What it delivers | State |
 |---|---|:---:|
@@ -42,7 +42,7 @@ exists to judge.
 | **1** | Naive RAG end to end — fixed chunks, one model, top-k | ✅ recall 0.629, chunks averaged 83 lines |
 | **2** | Retrieval quality — AST chunking, hybrid search, MMR | ✅ recall 0.629 → 0.726 |
 | **3** | Answer-quality harness — judge, citations, failure attribution | ✅ 14 ok / 4 retrieval / 2 generation, runs now reproducible |
-| 4 | Model/approach ROI comparison + written decision | ⬜ next |
+| **4** | Model/approach ROI comparison + written decision | ✅ [decisions.md](decisions.md) — rag/3b wins on every deterministic metric |
 
 ---
 
